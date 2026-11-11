@@ -1,0 +1,49 @@
+# ── Rust 构建产物 ──
+/src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# ── Android 构建产物（tauri android init 会重新生成）──
+/src-tauri/gen/
+/src-tauri/.tauri/
+
+# ── 分发产物 ──
+/dist/
+/build/
+*.exe
+*.msi
+*.apk
+*.aab
+*.idsig
+
+# ── 签名密钥（绝对不能提交）──
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+
+# ── 依赖 ──
+node_modules/
+
+# ── Python（图片生成脚本用）──
+__pycache__/
+*.pyc
+
+# ── 编辑器 / 系统 ──
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 日志与临时文件 ──
+*.log
+run.err
+build-android.*
+
+# ── 截图（调试时产生）──
+ui-*.png
+emu-*.png

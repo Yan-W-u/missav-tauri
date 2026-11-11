@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>播放 — MissAV 下载器</title>
+<style>
+  :root{
+    --bg:#0a0d12; --bg2:#12181f; --line:#242f3b;
+    --fg:#e6edf3; --fg2:#9aa7b8; --fg3:#6b7785; --acc:#e5484d;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+
+  header{
+    flex-shrink:0;display:flex;align-items:center;gap:10px;
+    padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top));
+    background:var(--bg2);border-bottom:1px solid var(--line);
+  }
+  .back{
+    flex-shrink:0;display:flex;align-items:center;gap:6px;
+    padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;
+    background:#1c242e;border:1px solid var(--line);color:var(--fg2);
+    cursor:pointer;transition:.15s;text-decoration:none;
+  }
+  .back:hover{border-color:var(--acc);color:#fff}
+  .ttl{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .tid{font-size:11.5px;font-weight:700;color:var(--acc);
+       letter-spacing:.4px;text-transform:uppercase}
+  .tname{font-size:13px;color:var(--fg2);white-space:nowrap;
+         overflow:hidden;text-overflow:ellipsis}
+  .meta{flex-shrink:0;display:flex;gap:6px;align-items:center}
+  .chip{font-size:11.5px;padding:3px 9px;border-radius:6px;
+        background:#1c242e;border:1px solid var(--line);color:var(--fg3)}
+  .chip.hi{color:#9dcdfa;border-color:rgba(88,166,255,.5);
+           background:rgba(88,166,255,.12)}
+
+  .stage{flex:1;min-height:0;display:flex;align-items:center;
+         justify-content:center;background:#000;position:relative}
+  video{width:100%;height:100%;max-height:100%;background:#000;display:block}
+
+  .overlay{
+    position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:12px;background:rgba(0,0,0,.75);padding:24px;text-align:center;
+  }
+  .overlay.show{display:flex}
+  .overlay h3{font-size:15px;color:#fff}
+  .overlay p{font-size:12.5px;color:var(--fg3);max-width:520px;line-height:1.7}
+  .spin{
+    width:26px;height:26px;border:3px solid var(--fg3);
+    border-top-color:transparent;border-radius:50%;
+    animation:sp .8s linear infinite;
+  }
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  footer{
+    flex-shrink:0;padding:8px 16px;
+    padding-bottom:calc(8px + env(safe-area-inset-bottom));
+    background:var(--bg2);border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--fg3);display:flex;gap:14px;flex-wrap:wrap;
+    align-items:center;
+  }
+  footer .dot{color:#3fb950}
+
+  @media(max-width:720px){
+    header{padding:8px 10px;gap:8px}
+    .back{padding:5px 9px;font-size:12px}
+    .tname{font-size:12px}
+    footer{font-size:11px;padding:6px 10px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <button class="back" id="btnBack" title="关闭播放页，回到主界面">
+    <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor">
+      <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+    </svg>
+    返回
+  </button>
+  <div class="ttl">
+    <div class="tid" id="pId">—</div>
+    <div class="tname" id="pName">载入中…</div>
+  </div>
+  <div class="meta">
+    <span class="chip hi" id="pQual" style="display:none"></span>
+    <span class="chip" id="pState">准备中</span>
+  </div>
+</header>
+
+<div class="stage">
+  <video id="player" controls playsinline preload="metadata" autoplay></video>
+  <div class="overlay show" id="ovl">
+    <div class="spin" id="ovlSpin"></div>
+    <h3 id="ovlTitle">正在连接片源…</h3>
+    <p id="ovlMsg">首次可能需要几秒（要经过本地代理补 Referer）</p>
+  </div>
+</div>
+
+<footer>
+  <span id="fHint">—</span>
+</footer>
+
+<script src="/static/hls.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ── 参数 ──
+     播放页完全独立:所有信息都从 URL 传入,不依赖主界面任何状态。
+       u = m3u8 地址(base64url)
+       r = Referer 页面地址(base64url)
+       t = 番号/标题
+       n = 完整标题(可选)
+       q = 清晰度(可选)                                        */
+  function b64d(s) {
+    if (!s) return '';
+    try {
+      s = s.replace(/-/g, '+').replace(/_/g, '/');
+      while (s.length % 4) s += '=';
+      return decodeURIComponent(escape(atob(s)));
+    } catch (e) { return ''; }
+  }
+  function qs(k) {
+    return new URLSearchParams(location.search).get(k) || '';
+  }
+
+  var STREAM = b64d(qs('u'));
+  var REFERER = b64d(qs('r'));
+  var TITLE_ID = qs('t') || '';
+  var TITLE_FULL = b64d(qs('n')) || '';
+  var QUALITY = qs('q') || '';
+
+  var v = document.getElementById('player');
+  var ovl = document.getElementById('ovl');
+  var ovlSpin = document.getElementById('ovlSpin');
+  var ovlTitle = document.getElementById('ovlTitle');
+  var ovlMsg = document.getElementById('ovlMsg');
+  var stateEl = document.getElementById('pState');
+  var hintEl = document.getElementById('fHint');
+  var hls = null;
+  var triedReverse = false;
+
+  document.getElementById('pId').textContent = TITLE_ID || '播放';
+  document.getElementById('pName').textContent = TITLE_FULL || TITLE_ID || '';
+  if (QUALITY) {
+    var qe = document.getElementById('pQual');
+    qe.textContent = QUALITY;
+    qe.style.display = '';
+  }
+  document.title = (TITLE_ID ? TITLE_ID + ' — ' : '') + '播放';
+
+  function showOverlay(title, msg, spinning) {
+    ovl.classList.add('show');
+    ovlSpin.style.display = spinning ? '' : 'none';
+    ovlTitle.textContent = title;
+    ovlMsg.textContent = msg || '';
+  }
+  function hideOverlay() { ovl.classList.remove('show'); }
+  function ovlHidden() { return !ovl.classList.contains('show'); }
+  function setState(t) { stateEl.textContent = t; }
+
+  /* 返回主界面:优先关闭自己(独立窗口),
+     若本标签就是当前页(手机浏览器新标签)则退回上一页,再不行就跳首页 */
+  document.getElementById('btnBack').onclick = function () {
+    try { destroy(); } catch (e) {}
+    try { window.close(); } catch (e) {}
+    setTimeout(function () {
+      if (!window.closed) {
+        try { history.back(); } catch (e) {}
+        setTimeout(function () {
+          if (document.visibilityState === 'visible') location.href = '/';
+        }, 250);
+      }
+    }, 120);
+  };
+
+  function destroy() {
+    if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+  }
+
+  /* 尝试自动播放。
+     浏览器策略:未静音的自动播放会被拦(尤其桌面 Chrome / iOS)。
+     被拦时不要停留在"连接中",而是明确告诉用户点播放键 —— 视频其实已经就绪。 */
+  function maybePlay() {
+    var pr = v.play();
+    if (!pr || !pr.catch) {
+      setState('播放中');
+      return;
+    }
+    pr.then(function () {
+      hideOverlay();
+      setState('播放中');
+    }).catch(function () {
+      // NotAllowedError = 需要用户手势;其它原因也统一提示
+      hideOverlay();                 // 遮罩必须收起:数据已经就绪
+      setState('已就绪 · 点播放键');
+      hintEl.innerHTML = '<span class="dot">●</span> 片源已就绪'
+        + '，浏览器拦了自动播放，点下方的播放键即可'
+        + (QUALITY ? ' · ' + QUALITY : '');
+    });
+  }
+
+  /* 关键:走本机反向代理,由后端补 Referer。
+     浏览器 <video>/hls.js 无法自定义 Referer,D irect 连 CDN 会 403。 */
+  function startPlayback(playUrl) {
+    if (window.Hls && window.Hls.isSupported()) {
+      if (hls) { try { hls.destroy(); } catch (e) {} }
+      hls = new window.Hls({
+        maxBufferLength: 30,
+        enableWorker: true,
+        lowLatencyMode: false
+      });
+      hls.loadSource(playUrl);
+      hls.attachMedia(v);
+      hls.on(window.Hls.Events.MANIFEST_PARSED, function (_, data) {
+        hideOverlay();
+        setState('播放中');
+        var lv = data.levels && data.levels.length ? data.levels : [];
+        var best = lv.length ? Math.max.apply(null, lv.map(function (x) { return x.height || 0; })) : 0;
+        hintEl.innerHTML = '<span class="dot">●</span> 本地代理播放'
+          + (best ? ' · 最高 ' + best + 'p' : '')
+          + ' · 共 ' + lv.length + ' 档';
+        // 自动播放可能被浏览器策略拦下(未静音时)。
+        // 拦下不该显示"连接中"的遮罩,而是提示用户点一下播放键。
+        maybePlay();
+      });
+      // 有可播放数据就立刻收起遮罩 —— 这是"能播"的真正信号,
+      // 比 MANIFEST_PARSED 晚一点,但比等 play() 成功更可靠。
+      hls.on(window.Hls.Events.FRAG_LOADED, function () {
+        if (ovl.classList.contains('show') && v.readyState >= 2) hideOverlay();
+      });
+      hls.on(window.Hls.Events.LEVEL_LOADED, function () {
+        if (ovl.classList.contains('show') && v.readyState >= 2) hideOverlay();
+      });
+      hls.on(window.Hls.Events.ERROR, function (_, d) {
+        if (!d.fatal) return;
+        setState('出错');
+        var msg = (d.details || d.type || '') + '';
+        if (msg.indexOf('manifest') >= 0 || msg.indexOf('network') >= 0) {
+          showOverlay('片源读取失败',
+            '可能原因：代理断开、片源已过期、或该地址不允许跨站引用。'
+            + '\n可以关掉本页，回主界面改用「下载」保存后本地播放。', false);
+        } else {
+          showOverlay('播放器错误', msg, false);
+        }
+      });
+    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      v.src = playUrl;
+      v.addEventListener('loadedmetadata', function () {
+        hideOverlay(); setState('播放中');
+      });
+      v.addEventListener('canplay', function () { if (!ovlHidden()) hideOverlay(); });
+      maybePlay();
+      hintEl.innerHTML = '<span class="dot">●</span> 原生 HLS 播放';
+    } else {
+      showOverlay('当前环境不支持 HLS', '请用 Chrome / Edge / Safari 打开。', false);
+    }
+  }
+
+  /* 主流程:把播放源交给后端换取本地代理地址。
+     后端 /api/stream 既能接 m3u8,也能接普通页面(会先解析出 m3u8)。 */
+  function requestStream(rawUrl) {
+    showOverlay('正在连接片源…', '首次可能需要几秒（要经过本地代理补 Referer）', true);
+    setState('连接中');
+    var q = '/api/stream?url=' + encodeURIComponent(rawUrl)
+          + (REFERER ? '&referer=' + encodeURIComponent(REFERER) : '');
+    fetch(q, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok || !j.play_url) {
+          throw new Error((j && j.error) || '后端未返回播放地址');
+        }
+        startPlayback(j.play_url);
+      })
+      .catch(function (e) {
+        showOverlay('无法开始播放', String(e.message || e), false);
+        setState('失败');
+      });
+  }
+
+  if (!STREAM) {
+    showOverlay('缺少播放参数', '请从主界面点「在线观看」进入本页。', false);
+    setState('无参数');
+    return;
+  }
+  requestStream(STREAM);
+
+  /* 双击视频区切换全屏(桌面端更顺手) */
+  v.addEventListener('dblclick', function () {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(function () {});
+    } else if (v.requestFullscreen) {
+      v.requestFullscreen().catch(function () {});
+    }
+  });
+
+  /* 页面卸载时释放,避免后台继续拉流 */
+  window.addEventListener('pagehide', destroy);
+  window.addEventListener('beforeunload', destroy);
+})();
+</script>
+</body>
+</html>

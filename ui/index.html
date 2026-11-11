@@ -1,0 +1,2630 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- 手机端:viewport-fit=cover 让刘海屏可用;user-scalable=no 避免双击缩放 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MissAV">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='42' fill='%23e5484d'/%3E%3C/svg%3E">
+<title>MissAV 下载器</title>
+<style>
+  :root{
+    --bg:#0d1117; --bg2:#151b23; --bg3:#1c242e; --line:#2a3441;
+    --fg:#e6edf3; --fg2:#9aa7b8; --fg3:#6b7785;
+    --acc:#e5484d; --acc2:#ff6b70; --ok:#3fb950; --warn:#d29922; --info:#58a6ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  button,input,select{font:inherit;color:inherit;outline:none}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#30363d;border-radius:5px}
+  ::-webkit-scrollbar-thumb:hover{background:#3f4750}
+  ::-webkit-scrollbar-track{background:transparent}
+
+  /* 顶栏 */
+  header{
+    display:flex;align-items:center;gap:14px;padding:12px 20px;
+    background:linear-gradient(180deg,#171e27,#131a22);
+    border-bottom:1px solid var(--line); flex-shrink:0; z-index:10;
+  }
+  .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:16px;letter-spacing:.3px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--acc);
+       box-shadow:0 0 10px var(--acc)}
+  .env{display:flex;gap:16px;margin-left:auto;font-size:12px;color:var(--fg3);flex-wrap:wrap}
+  .env b{color:var(--fg2);font-weight:500}
+
+  /* 搜索 */
+  .searchbar{display:flex;gap:10px;padding:14px 20px;background:var(--bg2);
+             border-bottom:1px solid var(--line);flex-shrink:0}
+  .searchbox{flex:1;position:relative;display:flex;align-items:center}
+  .searchbox svg{position:absolute;left:13px;width:17px;height:17px;fill:var(--fg3)}
+  #q{
+    width:100%;padding:11px 14px 11px 39px;border-radius:9px;
+    background:var(--bg3);border:1px solid var(--line);color:var(--fg);
+    transition:.15s;
+  }
+  #q:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(229,72,77,.15)}
+  #q::placeholder{color:var(--fg3)}
+  .btn{
+    padding:11px 20px;border-radius:9px;border:1px solid var(--line);
+    background:var(--bg3);cursor:pointer;font-weight:600;white-space:nowrap;
+    transition:.15s; display:inline-flex;align-items:center;gap:7px;
+  }
+  .btn:hover{background:#252d38;border-color:#3a4553}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  .btn.primary:hover{background:var(--acc2);border-color:var(--acc2)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.sm{padding:6px 12px;font-size:12px;font-weight:500}
+
+  /* 主体 */
+  main{flex:1;display:flex;overflow:hidden}
+  .panel{display:flex;flex-direction:column;overflow:hidden}
+  #left{flex:1;min-width:0;border-right:1px solid var(--line)}
+  #right{width:390px;flex-shrink:0;background:var(--bg2);display:flex;flex-direction:column}
+
+  .ptitle{
+    padding:12px 20px;font-size:12px;font-weight:600;color:var(--fg3);
+    text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;
+  }
+  .ptitle .count{font-weight:400;text-transform:none;letter-spacing:0;color:var(--fg3)}
+
+  /* 结果网格
+     踩过的坑:原来用 repeat(auto-fill,minmax(240px,1fr)) 且父容器高度确定,
+     grid 的隐式行会被压缩到正好塞满容器 —— 118 条结果时卡片被压成 ~40px 细条,
+     scrollHeight 等于 clientHeight,连滚动都没有。
+     修法:显式 grid-auto-rows:min-content,并让卡片内容自己撑开高度;
+     列数由 JS 按窗口宽度算(--cols),不再依赖 auto-fill 的隐式行为。 */
+  #results{
+    flex:1;overflow-y:auto;padding:16px 20px;
+    display:grid;gap:16px;align-content:start;
+    grid-auto-rows:min-content;
+    grid-template-columns:repeat(var(--cols,4),minmax(0,1fr));
+    scrollbar-gutter:stable;
+  }
+  #results .empty{grid-column:1/-1}
+
+  /* 分页器 */
+  #pager{
+    flex-shrink:0;display:flex;flex-wrap:wrap;gap:5px;align-items:center;
+    justify-content:center;padding:10px 16px;border-top:1px solid var(--line);
+    background:var(--bg2);
+  }
+  #pager:empty{display:none}
+  .pgbtn{
+    min-width:34px;padding:6px 11px;border-radius:7px;font-size:12.5px;
+    background:var(--bg3);border:1px solid var(--line);color:var(--fg2);
+    cursor:pointer;transition:.14s;
+  }
+  .pgbtn:hover:not(:disabled){border-color:var(--acc);color:#fff}
+  .pgbtn.on{background:rgba(229,72,77,.2);border-color:var(--acc);color:#fff;font-weight:700}
+  .pgbtn:disabled{opacity:.35;cursor:default}
+  .pggap{color:var(--fg3);font-size:12px;padding:0 2px}
+  .card{
+    background:var(--bg2);border:1px solid var(--line);border-radius:11px;
+    overflow:hidden;cursor:pointer;transition:.16s;position:relative;
+  }
+  .card:hover{border-color:var(--acc);transform:translateY(-2px);
+              box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .card.selected{border-color:var(--acc);box-shadow:0 0 0 2px rgba(229,72,77,.25)}
+  .thumb{position:relative;aspect-ratio:16/9;background:#0a0e13;overflow:hidden}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .thumb .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+             color:var(--fg3);font-size:12px}
+  .badge{
+    position:absolute;padding:2px 7px;border-radius:6px;font-size:11px;font-weight:600;
+    backdrop-filter:blur(4px);letter-spacing:.2px;
+  }
+  .badge.dur{right:6px;bottom:6px;background:rgba(0,0,0,.75);color:#ddd}
+  .badge.chs{left:6px;bottom:6px;background:rgba(0,120,60,.85);color:#fff}
+  .badge.unc{left:6px;top:6px;background:linear-gradient(135deg,#ff6b70,#e5484d);color:#fff}
+  .badge.cen{left:6px;top:6px;background:rgba(60,70,85,.9);color:#cfd8e3}
+  .cbody{padding:10px 11px 12px}
+  .cid{font-size:11px;font-weight:700;color:var(--acc2);letter-spacing:.4px;
+       text-transform:uppercase;margin-bottom:3px}
+  .ctitle{font-size:12.5px;line-height:1.45;color:var(--fg2);
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .pick{
+    display:none;position:absolute;inset:auto 0 0 0;padding:8px;background:rgba(229,72,77,.94);
+    color:#fff;font-size:11.5px;font-weight:600;text-align:center;
+  }
+  .card.selected .pick{display:block}
+
+  /* 卡片右上角的"简介"按钮 */
+  .info-btn{
+    position:absolute;right:6px;top:6px;width:20px;height:20px;border-radius:50%;
+    background:rgba(10,14,19,.82);border:1px solid rgba(255,255,255,.22);color:#dfe7ef;
+    font-size:11px;font-weight:700;font-style:italic;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;opacity:0;transition:.14s;
+    font-family:Georgia,serif;
+  }
+  .card:hover .info-btn{opacity:1}
+  .info-btn:hover{background:var(--acc);border-color:var(--acc);color:#fff}
+
+  /* 详情/简介弹窗 */
+  .modal{
+    position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+    background:rgba(6,9,12,.72);backdrop-filter:blur(3px);padding:24px;
+  }
+  .modal.open{display:flex}
+  .mbox{
+    width:min(760px,94vw);max-height:88vh;display:flex;flex-direction:column;
+    background:#121820;border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 24px 64px rgba(0,0,0,.6);overflow:hidden;
+  }
+  .mhead{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:14px 18px;border-bottom:1px solid var(--line);flex-shrink:0;
+    font-size:14px;font-weight:600;
+  }
+  .mbody{padding:18px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+  .mhero{border-radius:10px;overflow:hidden;background:#0a0e13;max-height:300px}
+  .mhero img{width:100%;height:auto;display:block;object-fit:cover}
+  .mq{font-size:19px;font-weight:800;color:var(--acc2);letter-spacing:.6px;
+      text-transform:uppercase}
+  .mfull{font-size:15px;line-height:1.6;color:var(--fg);font-weight:600}
+  .mmeta{display:flex;flex-wrap:wrap;gap:6px}
+  .mchip{
+    font-size:11.5px;padding:3px 9px;border-radius:6px;
+    background:var(--bg3);border:1px solid var(--line);color:var(--fg2);
+  }
+  .mchip.unc{background:rgba(229,72,77,.18);border-color:rgba(229,72,77,.5);color:#ff8b8f}
+  .msect{font-size:11.5px;font-weight:700;color:var(--fg3);
+         text-transform:uppercase;letter-spacing:.6px;margin-bottom:-4px}
+  .msyn{font-size:13px;line-height:1.75;color:var(--fg2);
+        background:var(--bg2);border:1px solid var(--line);border-radius:9px;
+        padding:12px 14px;white-space:pre-wrap}
+  .mact{display:flex;gap:8px;padding-top:4px}
+
+  /* 空状态 */
+  .empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;
+         justify-content:center;padding:60px 20px;color:var(--fg3);text-align:center;gap:10px}
+  .empty svg{width:52px;height:52px;fill:#2a3441}
+  .empty h3{color:var(--fg2);font-size:15px;font-weight:600}
+  .empty p{font-size:12.5px;line-height:1.7;max-width:420px}
+  .kbd{display:inline-block;padding:1px 6px;border-radius:4px;background:var(--bg3);
+       border:1px solid var(--line);font-size:11px;color:var(--fg2);font-family:monospace}
+
+  /* 右栏:详情 */
+  .dt{padding:16px 18px;overflow-y:auto;flex:1}
+  .dt-hero{aspect-ratio:16/9;border-radius:9px;overflow:hidden;background:#0a0e13;margin-bottom:13px}
+  .dt-hero img{width:100%;height:100%;object-fit:cover}
+  .dt h2{font-size:14px;line-height:1.5;margin-bottom:9px;font-weight:600}
+  .dt-id{font-size:12px;color:var(--acc2);font-weight:700;letter-spacing:.5px;margin-bottom:6px}
+  .meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+  .chip{padding:3px 9px;border-radius:13px;background:var(--bg3);border:1px solid var(--line);
+        font-size:11.5px;color:var(--fg2)}
+  .chip.unc{background:rgba(229,72,77,.15);border-color:rgba(229,72,77,.5);color:var(--acc2)}
+  .chip.ok{background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.4);color:var(--ok)}
+
+  .sect{margin-bottom:15px}
+  .lab{font-size:11px;font-weight:600;color:var(--fg3);text-transform:uppercase;
+       letter-spacing:.4px;margin-bottom:7px}
+  .qlist{display:flex;flex-wrap:wrap;gap:7px}
+  .qbtn{padding:7px 14px;border-radius:8px;background:var(--bg3);border:1px solid var(--line);
+        cursor:pointer;font-size:12.5px;transition:.15s}
+  .qbtn:hover{border-color:var(--acc)}
+  .qbtn.on{background:rgba(229,72,77,.18);border-color:var(--acc);color:#fff;font-weight:600}
+  .qbtn .bw{color:var(--fg3);font-size:10.5px;margin-left:4px}
+
+  /* 目录选择 */
+  .pathbox{display:flex;gap:6px;margin-bottom:8px}
+  #outdir{
+    flex:1;padding:8px 11px;border-radius:8px;background:var(--bg3);
+    border:1px solid var(--line);font-size:12.5px;font-family:monospace;
+  }
+  #outdir:focus{border-color:var(--acc)}
+  .dirlist{max-height:170px;overflow-y:auto;background:#11171e;border:1px solid var(--line);
+           border-radius:8px;font-size:12.5px}
+  .dirrow{padding:7px 11px;cursor:pointer;display:flex;align-items:center;gap:8px;
+          border-bottom:1px solid rgba(42,52,65,.5)}
+  .dirrow:last-child{border-bottom:0}
+  .dirrow:hover{background:var(--bg3)}
+  .dirrow svg{width:14px;height:14px;fill:var(--info);flex-shrink:0}
+  .dirrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dirrow.up svg{fill:var(--fg3)}
+  .free{font-size:11px;color:var(--fg3);margin-top:5px;display:flex;justify-content:space-between}
+
+  /* 盘符快捷栏:点一下就切到该盘的根目录 */
+  .drives{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+  .drv{
+    padding:5px 11px;border-radius:7px;background:var(--bg3);border:1px solid var(--line);
+    cursor:pointer;font-size:12px;font-weight:600;transition:.15s;display:flex;align-items:center;
+    gap:5px;position:relative;
+  }
+  .drv:hover{border-color:var(--acc);background:#252d38}
+  .drv.on{background:rgba(229,72,77,.18);border-color:var(--acc);color:#fff}
+  .drv .sz{font-weight:400;color:var(--fg3);font-size:10.5px}
+  .drv.on .sz{color:#c9d1d9}
+  .drv.dis{opacity:.4;cursor:not-allowed}
+
+  /* 残留缓存提示:异常中断的分片缓存会占几 GB,给用户一个明确的一键清理 */
+  .cachetip{
+    margin-top:8px;padding:8px 10px;border-radius:8px;font-size:11.5px;line-height:1.5;
+    background:rgba(210,153,34,.10);border:1px solid rgba(210,153,34,.40);
+    display:flex;align-items:center;gap:8px;
+  }
+  .cachetip .txt{flex:1;color:#d0b76a}
+  .cachetip button{
+    padding:4px 10px;border-radius:6px;background:rgba(210,153,34,.25);
+    border:1px solid rgba(210,153,34,.6);color:#f0d78a;cursor:pointer;
+    font-size:11.5px;font-weight:600;white-space:nowrap;
+  }
+  .cachetip button:hover{background:rgba(210,153,34,.4)}
+
+  /* 任务 */
+  #taskwrap{flex-shrink:0;border-top:1px solid var(--line);display:flex;flex-direction:column;
+            max-height:42%;min-height:0}
+  #tasks{overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+  .task{background:var(--bg3);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+  .task .trow{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .task .tname{font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;
+               white-space:nowrap;color:var(--fg2)}
+  .st{font-size:10.5px;padding:2px 7px;border-radius:5px;font-weight:600;white-space:nowrap}
+  .st.run{background:rgba(88,166,255,.18);color:var(--info)}
+  .st.done{background:rgba(63,185,80,.18);color:var(--ok)}
+  .st.err{background:rgba(229,72,77,.18);color:var(--acc2)}
+  .st.queued{background:rgba(210,153,34,.18);color:var(--warn)}
+  .bar{height:5px;border-radius:3px;background:#0d1117;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;
+         background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .25s}
+  /* 拼接/转封装:没有确定进度,用流动条纹表示还在干活 */
+  .bar.busy i{
+    background:repeating-linear-gradient(90deg,#e5484d 0,#ff6b70 12px,#e5484d 24px);
+    background-size:48px 100%;
+    animation:flow 1s linear infinite;
+  }
+  @keyframes flow{from{background-position:0 0}to{background-position:48px 0}}
+  .task .tsub{font-size:11px;color:var(--fg3);margin-top:5px;display:flex;
+              justify-content:space-between;gap:8px}
+  .task .terr{font-size:11px;color:var(--acc2);margin-top:5px;line-height:1.4;
+              word-break:break-all;max-height:52px;overflow-y:auto}
+
+  /* 弹层 */
+  #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(80px);
+         background:#1f2732;border:1px solid var(--line);border-radius:9px;
+         padding:11px 20px;font-size:13px;opacity:0;transition:.25s;z-index:50;
+         box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:80vw}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast.ok{border-color:rgba(63,185,80,.5)}
+  #toast.err{border-color:rgba(229,72,77,.6)}
+
+  .loading{display:inline-block;width:13px;height:13px;border:2px solid var(--fg3);
+           border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;
+           vertical-align:middle}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* 同片源提示:两个"版本"共用同一套流时明确告诉用户 */
+  .samesrc{
+    margin:10px 0 12px;padding:9px 11px;border-radius:8px;font-size:11.5px;
+    line-height:1.55;background:rgba(210,153,34,.10);
+    border:1px solid rgba(210,153,34,.42);color:#d0b76a;
+  }
+
+  /* 下载历史抽屉 */
+  .drawer{
+    position:fixed;top:0;right:0;bottom:0;width:520px;max-width:94vw;
+    background:#121820;border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .22s ease;z-index:40;
+    display:flex;flex-direction:column;box-shadow:-16px 0 40px rgba(0,0,0,.45);
+  }
+  .drawer.open{transform:translateX(0)}
+  .dhead{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;
+         align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .dhead>span{font-size:14px;font-weight:600}
+  .dstat{font-size:11.5px;font-weight:400;color:var(--fg3);margin-left:6px}
+  #histQ{margin:12px 16px 0;padding:9px 12px;border-radius:8px;background:var(--bg3);
+         border:1px solid var(--line);color:var(--fg);font-size:12.5px}
+  #histQ:focus{border-color:var(--acc)}
+  #histList{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+
+  .hitem{display:flex;gap:10px;padding:9px;border-radius:9px;background:var(--bg2);
+         border:1px solid var(--line);position:relative}
+  .hitem:hover{border-color:#3a4553}
+  .hthumb{width:96px;height:54px;flex-shrink:0;border-radius:6px;overflow:hidden;background:#0a0e13}
+  .hthumb img{width:100%;height:100%;object-fit:cover}
+  .hthumb .ph{display:flex;align-items:center;justify-content:center;height:100%;
+              font-size:10px;color:var(--fg3)}
+  .hmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .hrow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .hslug{font-size:11.5px;font-weight:700;color:var(--acc2);letter-spacing:.3px}
+  .htitle{font-size:12px;color:var(--fg2);line-height:1.4;
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .hmeta{font-size:11px;color:var(--fg3);display:flex;gap:9px;flex-wrap:wrap}
+  .hact{display:flex;gap:5px;margin-top:2px}
+  .hact button{padding:3px 9px;border-radius:5px;font-size:11px;cursor:pointer;
+               background:var(--bg3);border:1px solid var(--line);color:var(--fg2)}
+  .hact button:hover{border-color:var(--acc);color:#fff}
+  .hact button.del:hover{border-color:var(--acc);color:var(--acc2)}
+  .hbadge{font-size:10px;padding:1px 6px;border-radius:5px;font-weight:600}
+  .hbadge.done{background:rgba(63,185,80,.16);color:var(--ok)}
+  .hbadge.error{background:rgba(229,72,77,.16);color:var(--acc2)}
+  .hbadge.missing{background:rgba(210,153,34,.16);color:var(--warn)}
+  .hempty{padding:40px 20px;text-align:center;color:var(--fg3);font-size:13px;line-height:1.8}
+
+  /* ── 分区 / 标签导航 ── */
+  #tabs{flex-shrink:0;padding:10px 16px;border-bottom:1px solid var(--line);
+        display:flex;flex-direction:column;gap:7px;background:var(--bg2)}
+  .tabrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .sec{
+    padding:6px 12px;border-radius:8px;font-size:12.5px;font-weight:600;
+    background:var(--bg3);border:1px solid var(--line);color:var(--fg2);
+    cursor:pointer;transition:.14s;white-space:nowrap;
+  }
+  .sec:hover{border-color:var(--acc);color:#fff}
+  .sec.on{background:rgba(229,72,77,.2);border-color:var(--acc);color:#fff}
+  .favcnt{font-size:10.5px;color:var(--acc2);font-weight:700}
+  .sec.on .favcnt{color:#fff}
+
+  .tagsrow{gap:5px;max-height:66px;overflow-y:auto;padding-right:2px}
+  .tag{
+    padding:3px 9px;border-radius:6px;font-size:11.5px;
+    background:transparent;border:1px solid var(--line);color:var(--fg3);
+    cursor:pointer;transition:.14s;white-space:nowrap;
+  }
+  .tag:hover{border-color:#3f4b5c;color:var(--fg2)}
+  .tag.on{background:rgba(88,166,255,.16);border-color:var(--info);color:#9dcdfa}
+
+  /* ── 已选标签栏（多选） ── */
+  .tagSelBar{
+    display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+    padding:7px 0 2px;margin-top:4px;border-top:1px dashed var(--line);
+  }
+  .tslabel{font-size:11px;color:var(--fg3);flex-shrink:0}
+  .tschip{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:3px 8px;border-radius:14px;font-size:11.5px;cursor:pointer;
+    background:rgba(88,166,255,.14);border:1px solid rgba(88,166,255,.5);
+    color:#9dcdfa;
+  }
+  .tschip:hover{border-color:var(--info)}
+  .tschip .tsx{
+    font-style:normal;font-size:11px;color:var(--fg3);
+    padding:0 2px;border-radius:3px;
+  }
+  .tschip .tsx:hover{color:#ff6b70;background:rgba(229,72,77,.15)}
+  .tsmode{
+    padding:3px 6px;font-size:11px;border-radius:6px;
+    background:var(--bg3);border:1px solid var(--line);color:var(--fg2);
+    cursor:pointer;outline:none;
+  }
+  .tag{white-space:nowrap}
+  .tagloading{font-size:11.5px;color:var(--fg3)}
+
+  /* ── 收藏按钮(卡片 & 详情) ── */
+  .fav-btn{
+    position:absolute;right:30px;top:6px;width:20px;height:20px;border-radius:50%;
+    background:rgba(10,14,19,.82);border:1px solid rgba(255,255,255,.22);
+    color:#dfe7ef;font-size:11px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    opacity:0;transition:.14s;
+  }
+  .card:hover .fav-btn{opacity:1}
+  .fav-btn.on{opacity:1;color:#ffd166;border-color:#ffd166;background:rgba(120,90,0,.5)}
+  .fav-btn:hover{border-color:#ffd166;color:#ffd166}
+
+  .dtfav{
+    margin:8px 0 4px;padding:7px 12px;border-radius:8px;font-size:12px;
+    background:var(--bg3);border:1px solid var(--line);color:var(--fg2);
+    cursor:pointer;transition:.14s;font-weight:600;
+  }
+  .dtfav:hover{border-color:#ffd166;color:#ffd166}
+  .dtfav.on{background:rgba(120,90,0,.3);border-color:#ffd166;color:#ffd166}
+
+  .dtplay{
+    margin:8px 0 4px;padding:7px 12px;border-radius:8px;font-size:12px;
+    background:rgba(88,166,255,.14);border:1px solid rgba(88,166,255,.5);
+    color:#9dcdfa;cursor:pointer;transition:.14s;font-weight:600;
+  }
+  .dtplay:hover{background:rgba(88,166,255,.26);color:#cfe8ff}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 4px}
+  .row2 .dtplay,.row2 .dtfav{margin:0;text-align:center}
+
+  .netrow{display:flex;align-items:center;gap:8px;margin:7px 0 4px;flex-wrap:wrap}
+  .netchk{display:flex;align-items:center;gap:5px;font-size:11.5px;
+          color:var(--fg3);cursor:pointer;user-select:none}
+  .netchk input{cursor:pointer;accent-color:#e5484d}
+  .nethint{font-size:11px;color:var(--warn);line-height:1.5}
+
+  /* (播放器已独立成 static/player.html，主界面不再需要播放器样式) */
+
+  /* 手机访问弹窗 */
+  .phq{margin:4px auto 0;width:180px;height:180px;border-radius:10px;
+       background:#fff;padding:10px;display:block}
+  .phurl{font-family:ui-monospace,Consolas,monospace;font-size:14px;font-weight:700;
+         color:var(--acc2);text-align:center;padding:10px;border-radius:8px;
+         background:var(--bg3);border:1px solid var(--line);word-break:break-all;
+         cursor:pointer;user-select:all}
+  .phnote{font-size:12px;line-height:1.75;color:var(--fg3)}
+  .phnote b{color:var(--fg2)}
+  .phsteps{counter-reset:s;padding-left:0;list-style:none;margin:0}
+  .phsteps li{counter-increment:s;position:relative;padding-left:24px;
+               margin-bottom:7px;font-size:12.5px;line-height:1.6;color:var(--fg2)}
+  .phsteps li::before{content:counter(s);position:absolute;left:0;top:1px;
+                      width:16px;height:16px;border-radius:50%;background:var(--acc);
+                      color:#fff;font-size:10.5px;font-weight:700;text-align:center;
+                      line-height:16px}
+
+  .fwbox{
+    margin:2px 0 4px;padding:10px 12px;border-radius:9px;font-size:12px;
+    line-height:1.65;background:rgba(210,153,34,.10);
+    border:1px solid rgba(210,153,34,.42);color:#d0b76a;
+  }
+  .fwbox b{color:#f0d78a}
+
+  /* 手机端才显示的"收起"按钮 */
+  .panelClose{display:none;background:var(--bg3);border:1px solid var(--line);
+              color:var(--fg2);border-radius:6px;padding:3px 10px;font-size:11.5px;
+              cursor:pointer}
+  .panelClose:active{background:var(--bg2)}
+
+  /* ── 导入外部链接 ── */
+  .impta{
+    width:100%;height:120px;resize:vertical;padding:10px 12px;
+    font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.7;
+    background:var(--bg3);border:1px solid var(--line);border-radius:8px;
+    color:var(--fg);outline:none;
+  }
+  .impta:focus{border-color:var(--acc)}
+  .improw{display:flex;gap:8px;align-items:center;margin:9px 0 4px}
+  .implist{display:flex;flex-direction:column;gap:7px;margin-top:6px;
+           max-height:44vh;overflow-y:auto}
+  .impitem{
+    padding:9px 11px;border-radius:8px;background:var(--bg3);
+    border:1px solid var(--line);font-size:12px;line-height:1.6;
+  }
+  .impitem.ok{border-color:rgba(63,185,80,.5);background:rgba(63,185,80,.07)}
+  .impitem.warn{border-color:rgba(210,153,34,.5);background:rgba(210,153,34,.07)}
+  .impitem.bad{border-color:rgba(229,72,77,.5);background:rgba(229,72,77,.07)}
+  .impurl{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;
+          color:var(--fg2);word-break:break-all;margin-bottom:3px}
+  .impstate{font-size:11.5px;font-weight:700}
+  .impstate.ok{color:#3fb950}
+  .impstate.warn{color:#d29922}
+  .impstate.bad{color:#ff6b70}
+  .impmsg{font-size:11px;color:var(--fg3);margin-top:2px}
+  .impacts{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+  .impacts .btn{padding:4px 10px;font-size:11.5px}
+
+  @media(max-width:1000px){
+    main{flex-direction:column}
+    #right{width:auto;height:auto;border-top:1px solid var(--line)}
+  }
+
+  /* ───────── 手机适配 ─────────
+     目标:竖屏单手可用。分区/标签可横向滑,卡片 2 列,面板改成底部抽屉。
+     safe-area 处理刘海屏与手势力区。 */
+  @media(max-width:720px){
+    header{padding:calc(8px + env(safe-area-inset-top)) 12px 8px;
+           gap:8px;flex-wrap:nowrap}
+    .logo{font-size:13px;white-space:nowrap;flex-shrink:0}
+    /* 手机上只保留"通路状态"这一条关键信息,其余技术细节隐藏。
+       选择器要足够具体才能盖过 #env 里的其它 span */
+    .env > span:not(#netHint):not(#pxst){display:none !important}
+    .env{font-size:11px;gap:4px;flex-shrink:1;min-width:0}
+    #netHint{font-size:11px}
+    .searchbox{width:100%}
+
+    .searchbar{padding:8px 12px 10px;gap:6px;flex-wrap:wrap}
+    .searchbox{min-width:0;flex:1 1 100%}
+    #q{padding:11px 12px 11px 38px;font-size:16px}  /* 16px 防止 iOS 自动放大 */
+    .searchbox svg{left:11px}
+    .searchbar .btn{padding:9px 12px;font-size:12.5px}
+    #perPage{display:none}                 /* 手机固定自适应列数 */
+
+    #tabs{padding:8px 12px}
+    .tabrow{gap:5px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
+            -webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+    .tabrow::-webkit-scrollbar{display:none}
+    .sec{flex:0 0 auto;padding:7px 12px;font-size:12.5px}
+    .tagsrow{max-height:none;padding-right:0}
+    .tag{flex:0 0 auto;padding:5px 10px;font-size:12px}
+
+    .ptitle{padding:9px 12px;font-size:11.5px}
+    #results{padding:10px 12px;gap:10px}
+    .card{border-radius:9px}
+    .ctitle{font-size:12px;-webkit-line-clamp:2}
+    .cid{font-size:10.5px}
+    .info-btn,.fav-btn{opacity:1;width:22px;height:22px}  /* 手机没有 hover,常显 */
+    .fav-btn{right:32px}
+
+    #pager{padding:8px 10px;gap:4px}
+    .pgbtn{min-width:30px;padding:6px 9px;font-size:12px}
+
+    /* 右侧面板:手机上改成覆盖式抽屉,点卡片后从底部弹出 */
+    #right{
+      position:fixed;left:0;right:0;bottom:0;width:auto;
+      max-height:82vh;height:auto;border-top:1px solid var(--line);
+      border-radius:16px 16px 0 0;z-index:30;
+      transform:translateY(calc(100% - 0px));
+      transition:transform .24s ease;box-shadow:0 -14px 40px rgba(0,0,0,.6);
+      display:flex;flex-direction:column;
+    }
+    #right.mopen{transform:translateY(0)}
+    /* 抽屉把手 */
+    #right::before{
+      content:'';position:absolute;top:6px;left:50%;transform:translateX(-50%);
+      width:38px;height:4px;border-radius:2px;background:#3a4553;
+    }
+    #right .ptitle:first-child{padding-top:16px}
+    .panelClose{display:inline-block}
+    /* 抽屉展开时,底部给任务区留滚动空间 */
+    #right.mopen #taskwrap{max-height:34vh;overflow-y:auto}
+    .dt{padding:12px 12px calc(12px + env(safe-area-inset-bottom))}
+
+    /* 手机上详情面板里的目录浏览太占地方,默认折叠 */
+    .dirlist{max-height:120px}
+    .mbody{padding:14px}
+    .mbox{width:96vw;max-height:86vh}
+    .drawer{width:100vw;max-width:none}
+    .row2{grid-template-columns:1fr 1fr}
+  }
+
+  /* 超小屏(小手机横竖切换) */
+  @media(max-width:400px){
+    .logo{font-size:12px}
+    .sec{padding:6px 10px;font-size:12px}
+    #results{gap:8px;padding:8px}
+    .ctitle{font-size:11.5px}
+  }
+
+  /* 横屏手机:面板更高,留出更多内容 */
+  @media(max-height:520px) and (orientation:landscape){
+    #right{max-height:96vh}
+  }
+
+  /* 触摸设备:去掉 hover 位移,避免点击时抖动 */
+  @media(hover:none){
+    .card:hover{transform:none;box-shadow:none}
+    .card:active{border-color:var(--acc)}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span class="dot"></span>MissAV 下载器</div>
+  <div class="env" id="env"><span>加载中…</span></div>
+</header>
+
+<div class="searchbar">
+  <div class="searchbox">
+    <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+    <input id="q" placeholder="输入番号或关键词，如 SSIS-001" autocomplete="off" spellcheck="false">
+  </div>
+  <button class="btn primary" id="btnSearch">
+    <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+    搜索
+  </button>
+  <select id="perPage" title="每页显示数量（自动按窗口大小推荐，也可手动选）"
+          style="padding:11px 8px;border-radius:9px;background:#1c242e;border:1px solid #2a3441;color:#e6edf3">
+    <option value="auto" selected>自适应</option>
+    <option value="3">3 列</option>
+    <option value="4">4 列</option>
+    <option value="5">5 列</option>
+    <option value="6">6 列</option>
+  </select>
+  <button class="btn" id="btnHistory" title="查看下载历史">
+    <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 7 7 6.99 6.99 0 0 1-4.7-1.8l-1.42 1.42A8.95 8.95 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+    历史
+  </button>
+  <button class="btn" id="btnImport" title="导入其他网站的链接">
+    <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M19 13v6H5v-6H3v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6h-2zM11 3v11.17L8.41 11.58 7 13l5 5 5-5-1.41-1.41L13 14.17V3h-2z"/></svg>
+    导入链接
+  </button>
+  <button class="btn" id="btnPhone" title="用手机访问这个界面">
+    <svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M17 1H7a2 2 0 0 0-2 2v18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm0 18H7V5h10v14z"/></svg>
+    手机
+  </button>
+</div>
+
+<main>
+  <section class="panel" id="left">
+    <!-- 分区 + 标签导航 -->
+    <nav id="tabs">
+      <div class="tabrow" id="secTabs">
+        <button class="sec on" data-sec="">搜索</button>
+        <button class="sec" data-sec="new">新作上市</button>
+        <button class="sec" data-sec="release">最近更新</button>
+        <button class="sec" data-sec="uncensored-leak">无码流出</button>
+        <button class="sec" data-sec="chinese-subtitle">中文字幕</button>
+        <button class="sec" data-sec="__fav">我的收藏 <span id="favCnt" class="favcnt"></span></button>
+      </div>
+      <div class="tabrow tagsrow" id="tagTabs">
+        <span class="tagloading">标签载入中…</span>
+      </div>
+      <!-- 已选标签栏：多选时显示，含并集/交集切换与清空 -->
+      <div class="tagSelBar" id="tagSelBar" style="display:none"></div>
+    </nav>
+
+    <div class="ptitle"><span id="ptitle-text">搜索结果</span> <span class="count" id="cnt"></span></div>
+    <div id="results">
+      <div class="empty">
+        <svg viewBox="0 0 24 24"><path d="M18 4v1h-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4v-1h2v1h6a2 2 0 0 0 2-2V4zm-6 4H4V4h8zm10 12h-8v-2h8zm0-4h-8v-2h8zm0-4h-8v-2h8z"/></svg>
+        <h3>输入番号开始</h3>
+        <p>支持完整番号（<span class="kbd">SSIS-001</span>）、关键词、或直接粘贴详情页链接。<br>也可以点上面的分区或标签直接浏览。<br>搜索结果会自动标注 <b style="color:#ff6b70">无码</b> / <b style="color:#9aa7b8">有码</b>。</p>
+      </div>
+    </div>
+    <div id="pager"></div>
+  </section>
+
+  <aside id="right">
+    <div class="ptitle">
+      下载面板
+      <button class="panelClose" id="panelClose" title="收起面板">收起 ▾</button>
+    </div>
+    <div class="dt" id="detail">
+      <div class="empty" style="padding:36px 10px">
+        <h3 style="font-size:13px">先在左侧选一个视频</h3>
+      </div>
+    </div>
+    <div id="taskwrap">
+      <div class="ptitle" style="border-top:0">下载任务 <span class="count" id="tcnt"></span></div>
+      <div id="tasks"><div style="padding:14px;text-align:center;color:var(--fg3);font-size:12px">暂无任务</div></div>
+    </div>
+  </aside>
+</main>
+
+<!-- 手机访问 -->
+<div id="phoneModal" class="modal">
+  <div class="mbox" style="width:min(460px,94vw)">
+    <div class="mhead">
+      <span>用手机访问</span>
+      <button class="btn sm" id="phClose">✕</button>
+    </div>
+    <div class="mbody" id="phBody">
+      <div style="text-align:center;padding:20px"><span class="loading"></span> 读取地址…</div>
+    </div>
+  </div>
+</div>
+
+<!-- 导入外部链接 -->
+<div id="impModal" class="modal">
+  <div class="mbox" style="width:min(620px,94vw)">
+    <div class="mhead">
+      <span>导入外部链接</span>
+      <button class="btn sm" id="impClose">✕</button>
+    </div>
+    <div class="mbody">
+      <div class="phnote" style="margin-bottom:8px">
+        支持一次粘贴<b>多条</b>（每行一个）。可以是<b>页面地址</b>，
+        也可以直接是 <b>.m3u8</b> 播放地址。
+        <br>检测通过后可直接<b>在线观看</b>或<b>下载</b>，不依赖 missav。
+      </div>
+      <textarea id="impText" class="impta" spellcheck="false"
+        placeholder="https://example.com/video/abc&#10;https://cdn.example.com/playlist.m3u8"></textarea>
+      <div class="improw">
+        <button class="btn" id="impCheck">
+          <span id="impCheckTxt">检测连通性</span>
+        </button>
+        <button class="btn sm" id="impClear" title="清空">清空</button>
+        <span class="phnote" id="impSum" style="margin-left:auto"></span>
+      </div>
+      <div id="impList" class="implist"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- 简介 / 完整信息弹窗 -->
+<div id="infoModal" class="modal">
+  <div class="mbox">
+    <div class="mhead">
+      <span id="mTitle">详情</span>
+      <button class="btn sm" id="mClose">✕</button>
+    </div>
+    <div class="mbody" id="mBody"></div>
+  </div>
+</div>
+
+<!-- 下载历史抽屉 -->
+<div id="histDrawer" class="drawer">
+  <div class="dhead">
+    <span>下载历史 <span id="histStats" class="dstat"></span></span>
+    <div style="display:flex;gap:6px;align-items:center">
+      <select id="histFilter" style="padding:5px 8px;border-radius:6px;background:#1c242e;
+              border:1px solid #2a3441;color:#e6edf3;font-size:12px">
+        <option value="">全部</option>
+        <option value="done">已完成</option>
+        <option value="error">失败</option>
+        <option value="missing">文件已删</option>
+      </select>
+      <button class="btn sm" id="histScan" title="扫描当前下载目录里已有的视频，补进历史">扫描已有</button>
+      <button class="btn sm" id="histClearMissing" title="只清理成品已不存在的记录">清理失效</button>
+      <button class="btn sm" id="histClearAll">清空</button>
+      <button class="btn sm" id="histClose">✕</button>
+    </div>
+  </div>
+  <input id="histQ" placeholder="按番号或标题筛选…" spellcheck="false">
+  <div id="histList"></div>
+</div>
+
+<!-- 播放器在独立页面 static/player.html 里自己加载 hls.js，
+     主界面不再引入它（省内存，也让主界面与播放互不干扰） -->
+<script>
+const $ = s => document.querySelector(s);
+let ENV = {};
+let CUR = null;        // 当前选中条目 {id,url,title,censor,...}
+let CUR_INFO = null;   // 当前条目的详情解析结果
+let CUR_STREAM = "";   // 当前解析到的片源标识(surrit uuid),用于对比两个版本
+let CUR_SLUG_BASE = "";
+let CUR_SLUG_FULL = "";
+let QUAL = "best";     // 已选清晰度
+let DIRS = [];         // 当前浏览目录
+
+function toast(msg, kind){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'show' + (kind ? ' ' + kind : '');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(()=> t.className = '', 2600);
+}
+
+function fmtBytes(n){
+  if (!n) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0; while (n >= 1024 && i < u.length-1){ n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+}
+
+/* HTML 转义:把用户/接口来的字符串安全放进属性或文本节点 */
+function escAttr(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escText(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/* ── 通信层适配 ──────────────────────────────────────────────
+   三种运行环境：
+     1. 桌面版（Tauri + 本地 HTTP 服务）—— 直接 fetch
+     2. 安卓版（Tauri，无本地 HTTP）—— 走 invoke 命令
+     3. 手机浏览器扫码（Python 后端）—— 直接 fetch
+
+   为什么不统一走 invoke：桌面版有一个真正的本地 HTTP 服务，
+   前端用 fetch 最直接，而且播放页的反向代理（/stream/...）必须是 HTTP。
+
+   安卓上没有"本地 HTTP 服务"的位置，所以这里把 /api/* 翻译成 invoke。 */
+const IS_TAURI = typeof window.__TAURI__ !== 'undefined'
+              || typeof window.__TAURI_INTERNALS__ !== 'undefined';
+
+/* /api/xxx?k=v -> {cmd: 'cmd_xxx', args: {k: v}} */
+function tauriRoute(path){
+  const [p, qs] = String(path).split('?');
+  const q = {};
+  if (qs){
+    for (const kv of qs.split('&')){
+      if (!kv) continue;
+      const i = kv.indexOf('=');
+      const k = decodeURIComponent(i < 0 ? kv : kv.slice(0, i));
+      const v = decodeURIComponent(i < 0 ? '' : kv.slice(i + 1));
+      q[k] = v;
+    }
+  }
+  const name = p.replace(/^\/api\//, '').replace(/\//g, '_');
+
+  // 逐个映射：参数名要和 Rust 侧 #[tauri::command] 的签名一致
+  switch (name){
+    case 'env':            return {cmd:'cmd_env', args:{}};
+    case 'connectivity':   return {cmd:'cmd_connectivity', args:{}};
+    case 'proxy_status':   return {cmd:'cmd_proxy_status', args:{}};
+    case 'proxy_detect':   return {cmd:'cmd_proxy_detect', args:{}};
+    case 'proxy':          return {cmd:'cmd_proxy_detect', args:{}};
+    case 'genres':         return {cmd:'cmd_genres', args:{}};
+    case 'search':         return {cmd:'cmd_search', args:{q:q.q||'', page:+q.page||1}};
+    case 'section':        return {cmd:'cmd_section', args:{name:q.name||'', page:+q.page||1}};
+    case 'genre':          return {cmd:'cmd_genre', args:{tag:q.tag||'', page:+q.page||1}};
+    case 'genre_multi':    return {cmd:'cmd_genre_multi',
+                                   args:{tags:(q.tags||'').split(',').filter(Boolean),
+                                         mode:q.mode||'', page:+q.page||1}};
+    case 'detail':
+    case 'probe':          return {cmd:'cmd_detail', args:{id:q.url||q.id||''}};
+    case 'tasks':          return {cmd:'cmd_tasks', args:{}};
+    case 'history':        return {cmd:'cmd_history', args:{}};
+    case 'favorites':      return {cmd:'cmd_favorites', args:{}};
+    case 'import_check':   return {cmd:'cmd_import_check', args:{urls:q.urls||q.url||''}};
+    case 'import_probe':   return {cmd:'cmd_stream_url', args:{url:q.url||'', referer:''}};
+    case 'stream':         return {cmd:'cmd_stream_url', args:{url:q.url||'', referer:q.referer||''}};
+    case 'lan':            return {cmd:'cmd_lan', args:{}};
+    default:               return null;
+  }
+}
+
+/* POST 路由映射（方法名不带 query） */
+function tauriPostRoute(path, body){
+  const name = String(path).replace(/^\/api\//, '').replace(/\//g, '_');
+  const b = body || {};
+  switch (name){
+    case 'download':        return {cmd:'cmd_download', args:{
+                              url:b.url||b.id||'', out_dir:b.out_dir||'',
+                              quality:b.quality||'best', threads:+b.threads||16,
+                              title:b.title||'', slug:b.slug||''}};
+    case 'task_cancel':     return {cmd:'cmd_task_cancel', args:{id:b.id||''}};
+    case 'favorite_toggle': return {cmd:'cmd_fav_toggle', args:{
+                              slug:b.slug||'', title:b.title||'',
+                              url:b.url||'', cover:b.cover||''}};
+    default:                return null;
+  }
+}
+
+async function api(path, opt){
+  // 安卓版：翻译成 invoke
+  if (IS_TAURI && !window.__MISSAV_HTTP__){
+    const invoke = window.__TAURI__.core.invoke;
+    let route;
+    if (opt && opt.method === 'POST'){
+      let body = {};
+      try { body = JSON.parse(opt.body || '{}'); } catch(e){}
+      route = tauriPostRoute(path, body);
+    } else {
+      route = tauriRoute(path);
+    }
+    if (!route){
+      throw new Error('该功能在手机上暂不支持: ' + path);
+    }
+    const j = await invoke(route.cmd, route.args);
+    if (!j) throw new Error('命令没有返回');
+    if (!j.ok) throw new Error(j.error || '请求失败');
+    return j;
+  }
+
+  // 桌面 / 浏览器：走 HTTP
+  const r = await fetch(path, opt);
+  let j;
+  try { j = await r.json(); } catch(e){ throw new Error('返回不是 JSON'); }
+  if (!j.ok) throw new Error(j.error || '请求失败');
+  return j;
+}
+
+/* ---------------- 环境 ---------------- */
+async function loadEnv(){
+  try{
+    ENV = await api('/api/env');
+    renderEnv(ENV.proxy, true);
+    // 初始页面可能还没有 outdir 输入框(选中视频后才渲染),所以做了存在性判断
+    const od = $('#outdir');
+    if (od) od.value = ENV.default_out;
+    browse(ENV.default_out);
+  }catch(e){
+    renderEnv(null, false);
+  }
+  checkProxy();
+}
+
+function renderEnv(proxy, ok){
+  const px = proxy
+    ? `<span>代理 <b id="pxv">${proxy}</b></span>`
+    : `<span>代理 <b>直连</b></span>`;
+  $('#env').innerHTML = ok
+    ? px +
+      `<span>ffmpeg <b>${ENV.ffmpeg ? '就绪' : '未找到'}</b></span>` +
+      `<span>${ENV.version}</span>` +
+      `<span id="netHint" title="站点通路 / 分片通路"></span>` +
+      `<span id="pxst" style="cursor:pointer" title="点击重新检测代理">●</span>`
+    : `<span style="color:#ff6b70">后端连接失败</span>`;
+  const st = $('#pxst');
+  if (st) st.onclick = recheckProxy;
+}
+
+async function checkProxy(){
+  const st = $('#pxst');
+  if (!st) return;
+  try{
+    const j = await api('/api/proxy/status');
+    if (j.proxy){ ENV.proxy = j.proxy; const pv=$('#pxv'); if(pv) pv.textContent=j.proxy; }
+    // 三态:绿=代理可用 / 黄=已配置但外网暂时不通 / 无=直连
+    if (!j.proxy){
+      st.style.color = '#6b7785';
+      st.title = '未配置代理（点击可重新检测）';
+    } else if (j.alive){
+      st.style.color = '#3fb950';
+      st.title = `代理 ${j.proxy} 正常（点击重新检测）`;
+    } else {
+      st.style.color = '#d29922';
+      st.title = `代理 ${j.proxy} 已配置，但外网暂时连不通（检查节点后点此重试）`;
+    }
+  }catch(e){ st.style.color = '#6b7785'; }
+}
+
+async function recheckProxy(){
+  const st = $('#pxst');
+  if (st) { st.style.color = '#d29922'; st.textContent = '…'; }
+  try{
+    const j = await api('/api/proxy');
+    if (j.proxy){
+      ENV.proxy = j.proxy;
+      const pv = $('#pxv');
+      if (pv) pv.textContent = j.proxy;
+      toast('已切换到代理 ' + j.proxy, 'ok');
+    } else {
+      toast('没找到可用代理，请先启动代理客户端', 'err');
+    }
+    checkProxy();
+  }catch(e){
+    toast('代理检测失败: ' + e.message, 'err');
+    checkProxy();
+  }
+}
+
+/* ---------------- 分区 / 标签浏览 ---------------- */
+let CUR_SRC = {kind: "search", value: ""};   // search | section | genre | genreMulti | fav
+let TAGS_LOADED = false;
+
+/* 标签多选状态。
+   数据结构:
+     TAG_SEL   = Set<string>          当前选中的标签名(序列即"已选")
+     TAG_MODE  = 'union'|'intersect'  多选时的合并方式
+   保存位置:
+     CUR_SRC.value 保存为数组(CUR_SRC.tags),翻页/刷新列表时用它重发请求
+     localStorage 'missav.tagsel' 持久化,下次打开界面自动恢复选中态
+   传给后续逻辑:
+     列表请求 -> /api/genre-multi?tags=a,b&mode=union
+     分页     -> gotoPage 用 CUR_SRC.tags 重建请求,页面间选中态不变 */
+let TAG_SEL = new Set();
+let TAG_MODE = 'union';
+
+const TAG_STORE_KEY = 'missav.tagsel';
+const TAG_MODE_KEY  = 'missav.tagmode';
+
+function saveTagSel(){
+  try{
+    localStorage.setItem(TAG_STORE_KEY, JSON.stringify(Array.from(TAG_SEL)));
+    localStorage.setItem(TAG_MODE_KEY, TAG_MODE);
+  }catch(e){ /* 隐私模式下写不了，忽略 */ }
+}
+
+function loadTagSel(){
+  try{
+    const raw = localStorage.getItem(TAG_STORE_KEY);
+    if (raw){
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) TAG_SEL = new Set(arr.filter(x => typeof x === 'string'));
+    }
+    const m = localStorage.getItem(TAG_MODE_KEY);
+    if (m === 'union' || m === 'intersect') TAG_MODE = m;
+  }catch(e){ TAG_SEL = new Set(); }
+}
+
+function renderTagSelBar(){
+  // 已选区:显示当前选中的标签 + 合并方式 + 清除按钮
+  const bar = $('#tagSelBar');
+  if (!bar) return;
+  const n = TAG_SEL.size;
+  if (!n){
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = '';
+  const chips = Array.from(TAG_SEL).map(t =>
+    `<span class="tschip" data-tag="${escAttr(t)}">${escText(t)}
+       <b class="tsx" title="移除">✕</b></span>`).join('');
+  bar.innerHTML = `
+    <span class="tslabel">已选 ${n} 个</span>
+    ${chips}
+    <select class="tsmode" id="tagMode">
+      <option value="union"${TAG_MODE==='union'?' selected':''}>并集（全部包含）</option>
+      <option value="intersect"${TAG_MODE==='intersect'?' selected':''}>交集（同时具备）</option>
+    </select>
+    <button class="btn sm" id="tagClear" title="清空所有标签">清空</button>`;
+  bar.querySelectorAll('.tschip').forEach(c => {
+    c.onclick = (e) => {
+      if (e.target.closest('.tsx')) return;
+      // 点 chip 本体 = 切回只看这一个标签
+      TAG_SEL = new Set([c.dataset.tag]);
+      renderTagSelBar(); openTags(1);
+    };
+    const x = c.querySelector('.tsx');
+    if (x) x.onclick = (e) => {
+      e.stopPropagation();
+      TAG_SEL.delete(c.dataset.tag);
+      saveTagSel(); renderTagSelBar(); syncTagButtons();
+      if (TAG_SEL.size) openTags(1); else openSection('new');
+    };
+  });
+  const sel = $('#tagMode');
+  if (sel) sel.onchange = () => {
+    TAG_MODE = sel.value; saveTagSel();
+    if (TAG_SEL.size) openTags(1);
+  };
+  const clr = $('#tagClear');
+  if (clr) clr.onclick = () => {
+    TAG_SEL.clear(); saveTagSel(); renderTagSelBar(); syncTagButtons();
+    openSection('new');
+  };
+}
+
+/* 让标签按钮的高亮与 TAG_SEL 保持一致 */
+function syncTagButtons(){
+  document.querySelectorAll('#tagTabs .tag').forEach(b => {
+    b.classList.toggle('on', TAG_SEL.has(b.dataset.tag));
+  });
+}
+
+async function loadGenres(){
+  if (TAGS_LOADED) return;
+  try{
+    const j = await api('/api/genres');
+    const box = $('#tagTabs');
+    const gs = j.genres || [];
+    if (!gs.length){ box.innerHTML = '<span class="tagloading">没有取到标签</span>'; return; }
+    box.innerHTML = gs.map(g =>
+      `<button class="tag" data-tag="${escAttr(g.tag)}"
+         title="${escAttr(g.tag)} · ${g.count} 条（点击可多选）">${escText(g.tag)}</button>`
+    ).join('');
+    box.querySelectorAll('.tag').forEach(b => {
+      // 多选:点一下加入/移出选择集,不替换原有选择
+      b.onclick = () => toggleTag(b.dataset.tag);
+    });
+    TAGS_LOADED = true;
+    loadTagSel();
+    syncTagButtons();
+    renderTagSelBar();
+    // 若上次退出时选了标签,自动恢复浏览
+    if (TAG_SEL.size) openTags(1);
+  }catch(e){
+    $('#tagTabs').innerHTML = '<span class="tagloading">标签载入失败</span>';
+  }
+}
+
+/* 点一个标签 = 切换它在选择集里 */
+function toggleTag(tag){
+  if (TAG_SEL.has(tag)) TAG_SEL.delete(tag);
+  else {
+    if (TAG_SEL.size >= 8){
+      toast('一次最多选 8 个标签', 'err');
+      return;
+    }
+    TAG_SEL.add(tag);
+  }
+  saveTagSel();
+  syncTagButtons();
+  renderTagSelBar();
+  if (!TAG_SEL.size){
+    toast('已取消全部标签', 'ok');
+    setActiveSec('new');
+    openSection('new');
+    return;
+  }
+  openTags(1);
+}
+
+/* 按"选中标签集合"浏览。
+   单选走原来的 /api/genre(快);多选走 /api/genre-multi(后端聚合)。 */
+async function openTags(page=1){
+  const tags = Array.from(TAG_SEL);
+  if (!tags.length) return openSection('new');
+
+  document.querySelectorAll('#secTabs .sec').forEach(b => b.classList.remove('on'));
+  syncTagButtons();
+
+  if (tags.length === 1){
+    CUR_SRC = {kind:'genre', value:tags[0], tags:[tags[0]]};
+  } else {
+    CUR_SRC = {kind:'genreMulti', value:tags.join(','), tags:tags.slice()};
+  }
+  CUR_QUERY = ""; PAGE_CACHE.clear(); CUR_PAGE = 1;
+
+  const modeTxt = tags.length > 1
+    ? (TAG_MODE === 'intersect' ? ' · 交集' : ' · 并集')
+    : '';
+  $('#ptitle-text').textContent = '标签：' + tags.join(' + ') + modeTxt;
+  await loadListPage(page);
+}
+
+async function openSection(sec, page=1){
+  CUR_SRC = {kind: sec === '__fav' ? 'fav' : 'section', value: sec};
+  setActiveSec(sec);
+  if (sec === '__fav') return openFavorites(page);
+  CUR_QUERY = ""; PAGE_CACHE.clear(); CUR_PAGE = 1;
+  await loadListPage(page);
+}
+
+async function openGenre(tag, page=1){
+  // 兼容旧调用:单选 = 把选择集设为仅该标签
+  TAG_SEL = new Set([tag]);
+  saveTagSel(); syncTagButtons(); renderTagSelBar();
+  await openTags(page);
+}
+
+function setActiveSec(sec){
+  document.querySelectorAll('#secTabs .sec').forEach(b => {
+    b.classList.toggle('on', b.dataset.sec === sec);
+  });
+  if (sec === '' || sec === '__fav'){
+    TAG_SEL.clear(); saveTagSel();
+    document.querySelectorAll('#tagTabs .tag').forEach(b => b.classList.remove('on'));
+    renderTagSelBar();
+  }
+}
+
+async function openFavorites(page=1){
+  CUR_SRC = {kind: 'fav', value: ''};
+  setActiveSec('__fav');
+  $('#ptitle-text').textContent = '我的收藏';
+  CUR_PAGE = page;
+  TOTAL_PAGES = 1;
+  try{
+    const j = await api('/api/favorites');
+    const items = j.items || [];
+    $('#cnt').textContent = `${items.length} 条收藏`;
+    renderResults(items, '');
+    $('#pager').innerHTML = '';
+    if (!items.length){
+      $('#results').innerHTML =
+        `<div class="empty"><h3>还没有收藏</h3>
+         <p>在卡片上点 <b style="color:#ffd166">★</b> 或详情页的「加入收藏」即可。</p></div>`;
+    }
+  }catch(e){
+    $('#results').innerHTML =
+      `<div class="empty"><h3 style="color:#ff6b70">读取收藏失败</h3><p>${escText(e.message)}</p></div>`;
+  }
+}
+
+/* 统一的列表分页(分区/标签都用它) */
+async function loadListPage(page=1){
+  CUR_PAGE = Math.max(1, page);
+  $('#cnt').innerHTML = '<span class="loading"></span>';
+  if (!PAGE_CACHE.has(CUR_PAGE)){
+    $('#results').innerHTML =
+      `<div class="empty"><span class="loading"></span><h3>读取第 ${CUR_PAGE} 页…</h3></div>`;
+  }
+  try{
+    let items, pages;
+    if (PAGE_CACHE.has(CUR_PAGE)){
+      const c = PAGE_CACHE.get(CUR_PAGE); items = c.items; pages = c.pages;
+    } else {
+      let url;
+      if (CUR_SRC.kind === 'section'){
+        url = '/api/section?name=' + encodeURIComponent(CUR_SRC.value);
+      } else if (CUR_SRC.kind === 'genreMulti'){
+        // 多标签:把选中的全部标签一起交给后端聚合
+        const tags = CUR_SRC.tags || CUR_SEL_TAGS();
+        url = '/api/genre-multi?tags=' + encodeURIComponent(tags.join(','))
+            + '&mode=' + encodeURIComponent(TAG_MODE);
+      } else {
+        url = '/api/genre?tag=' + encodeURIComponent(CUR_SRC.value);
+      }
+      const j = await api(url + '&page=' + CUR_PAGE);
+      items = j.items || []; pages = j.pages || 1;
+      if (CUR_SRC.kind === 'genreMulti'){
+        // 后端能算出一共多少页;并集模式下按各标签页数取最大
+        pages = Math.max(1, pages);
+      }
+      PAGE_CACHE.set(CUR_PAGE, {items, pages});
+    }
+    TOTAL_PAGES = pages;
+    renderResults(items, '');
+    renderPager();
+    $('#results').scrollTop = 0;
+  }catch(e){
+    $('#results').innerHTML =
+      `<div class="empty"><h3 style="color:#ff6b70">加载失败</h3><p>${escText(e.message)}</p></div>`;
+    $('#cnt').textContent = '';
+  }
+}
+
+/* ---------------- 搜索(按站点分页实时索引) ---------------- */
+let CUR_QUERY = "";
+let CUR_PAGE = 1;
+let TOTAL_PAGES = 1;
+let PAGE_CACHE = new Map();      // page -> items,回看已访问页不再请求
+
+/* ── 网址识别（与后端 urlparse_util.py 同一套规则）─────────────
+   为什么前端也要有一份:主搜索框要在"回车"这一刻决定去搜索还是去访问,
+   不能每条都往服务器问一次。规则保持与后端一致,测试有交叉校验。 */
+const SCHEME_RE = /^(https?):\/\//i;
+const LABEL_RE = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/i;
+const TLD_RE = /^[a-z]{2,24}$/i;
+const URLISH_RE = /^[a-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$/i;
+
+function hasScheme(s){ return SCHEME_RE.test(s || ''); }
+
+function looksLikeDomain(s){
+  s = (s || '').trim();
+  if (!s || /\s/.test(s)) return false;
+  if (hasScheme(s)) return false;
+  if (!URLISH_RE.test(s)) return false;
+  const hostpart = s.split(/[/?#]/)[0];
+  if (!hostpart) return false;
+
+  let host;
+  if (hostpart.startsWith('[')){
+    const m = /^(\[[^\]]+\])(?::(\d+))?$/.exec(hostpart);
+    if (!m) return false;
+    host = m[1];
+    if (m[2] && !(parseInt(m[2],10) > 0 && parseInt(m[2],10) < 65536)) return false;
+  } else {
+    if ((hostpart.match(/:/g) || []).length > 1) return false;
+    const parts = hostpart.split(':');
+    host = parts[0];
+    if (parts.length > 1){
+      const port = parts[1];
+      if (!/^\d+$/.test(port)) return false;
+      if (!(parseInt(port,10) > 0 && parseInt(port,10) < 65536)) return false;
+    }
+  }
+
+  if (host.toLowerCase() === 'localhost') return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)){
+    return host.split('.').every(x => { const n = +x; return n >= 0 && n <= 255; });
+  }
+  if (host.startsWith('[') && host.endsWith(']')) return host.includes(':');
+  const labels = host.split('.');
+  if (labels.length < 2) return false;
+  if (!labels.every(x => LABEL_RE.test(x))) return false;
+  return TLD_RE.test(labels[labels.length - 1]);
+}
+
+/* 用户输入 -> {kind:'url'|'search', url, text, fallbackHttp} */
+function parseUrlInput(raw){
+  const s = (raw || '').trim();
+  if (!s) return {kind:'empty', url:'', text:'', fallbackHttp:false};
+  if (hasScheme(s))                       // 显式协议:一个字符都不改
+    return {kind:'url', url:s, text:'', fallbackHttp:false};
+  if (looksLikeDomain(s))                 // 裸域名:补 https,允许回退 http
+    return {kind:'url', url:'https://' + s, text:'', fallbackHttp:true};
+  return {kind:'search', url:'', text:s, fallbackHttp:false};
+}
+
+/* 主搜索框里输入了网址 -> 直接用"导入外部链接"的能力去解析/观看。
+   流程与导入弹窗一致(可校验连通性、可在线观看/下载),只是入口更顺手。 */
+async function openExternalUrl(p, rawInput){
+  const url = p.url;
+  // 让用户可以一眼看到系统补全成了什么
+  if (url !== rawInput) toast('已补全为 ' + url, 'ok');
+
+  $('#ptitle-text').textContent = '外部链接';
+  setActiveSec('');
+  $('#cnt').innerHTML = '<span class="loading"></span>';
+  $('#results').innerHTML =
+    `<div class="empty"><span class="loading"></span>
+       <h3>正在解析网址…</h3><p>${escText(url)}</p></div>`;
+  $('#pager').innerHTML = '';
+
+  let item = null;
+  // 1) 先按"检测"走一遍:能拿到 stream 就直接可播
+  try{
+    const j = await api('/api/import/check?urls=' + encodeURIComponent(url));
+    const it = (j.items || [])[0];
+    if (it) item = it;
+    if (it && it.status === 'has_stream'){
+      IMP_ITEMS = [it];
+      renderExternalResult(it, url);
+      return;
+    }
+  }catch(e){ /* 检测失败就继续用 probe 试一次 */ }
+
+  // 2) 检测没拿到 stream(或接口失败) -> 再试 probe,它信息更全
+  try{
+    const d = await api('/api/import/probe?url=' + encodeURIComponent(url));
+    if (d && d.info && d.info.playlist){
+      const it = {
+        url: d.info.url || url, host: '', status: 'has_stream',
+        title: d.info.title || d.info.full_title || '',
+        stream: d.info.playlist, ms: 0, error: '',
+      };
+      IMP_ITEMS = [it];
+      renderExternalResult(it, url);
+      return;
+    }
+    if (!item){
+      item = {url, host:'', status:'failed', ms:0,
+              error: (d && d.error) || '没有找到可播放的播放源'};
+    } else if (d && d.error){
+      item.error = d.error;
+    }
+  }catch(e){
+    if (!item) item = {url, host:'', status:'failed', ms:0,
+                       error: e.message || String(e)};
+  }
+
+  // 3) 都不行:把原因说清楚,别让用户以为程序卡住了
+  renderExternalResult(item || {url, status:'failed', error:'未知原因'}, url);
+}
+
+/* 在结果区渲染一条外部链接的解析结果(可直接观看/下载) */
+function renderExternalResult(it, url){
+  const playable = it.status === 'has_stream';
+  const reachable = it.status === 'reachable';
+  const cls = playable ? 'ok' : (reachable ? 'warn' : 'bad');
+  const label = playable ? '✓ 可播放'
+              : (reachable ? '△ 能打开但没有播放源' : '✕ 连接失败');
+  $('#cnt').textContent = '';
+  $('#results').innerHTML = `
+    <div class="impitem ${cls}" style="max-width:760px">
+      <div class="impurl">${escText(it.url || url)}</div>
+      <div class="impstate ${cls}">${label}
+        ${it.ms ? `<span style="color:var(--fg3);font-weight:400"> · ${it.ms}ms</span>` : ''}
+      </div>
+      ${it.title ? `<div class="impmsg">标题：${escText(it.title)}</div>` : ''}
+      ${it.stream && it.stream !== (it.url || url)
+        ? `<div class="impmsg">播放源：${escText(it.stream.slice(0,110))}</div>` : ''}
+      ${it.error ? `<div class="impmsg" style="color:#ff9a9e">${escText(it.error)}</div>` : ''}
+      ${playable ? `
+      <div class="impacts">
+        <button class="btn sm" id="extPlay">▶ 在线观看</button>
+        <button class="btn sm" id="extDl">⬇ 下载</button>
+        <button class="btn sm" id="extImp">加入导入列表</button>
+      </div>` : `
+      <div class="impacts">
+        <button class="btn sm" id="extImp">在导入面板里重试</button>
+      </div>`}
+    </div>`;
+
+  const bp = $('#extPlay');
+  if (bp) bp.onclick = () => playExternal(it);
+  const bd = $('#extDl');
+  if (bd) bd.onclick = () => downloadExternal(it);
+  const bi = $('#extImp');
+  if (bi) bi.onclick = () => {
+    openImport();
+    const t = $('#impText');
+    if (t){ t.value = url; }
+    toast('已填入导入面板，可点「检测连通性」重试', 'ok');
+  };
+}
+
+async function doSearch(page=1){
+  const rawq = $('#q').value.trim();
+  if (!rawq) { toast('请输入番号、关键词或网址','err'); return; }
+
+  // 只对第 1 页做"这是不是网址"的判定:翻页时输入框内容不该再被解释
+  if (page === 1){
+    const p = parseUrlInput(rawq);
+    if (p.kind === 'url'){
+      await openExternalUrl(p, rawq);
+      return;
+    }
+  }
+
+  const q = rawq;
+  CUR_SRC = {kind: 'search', value: q};
+  setActiveSec('');
+  $('#ptitle-text').textContent = '搜索结果';
+  if (q !== CUR_QUERY){
+    CUR_QUERY = q;
+    PAGE_CACHE.clear();
+    CUR_PAGE = 1;
+    TOTAL_PAGES = 1;
+  }
+  CUR_PAGE = Math.max(1, page);
+
+  $('#cnt').innerHTML = '<span class="loading"></span>';
+  if (!PAGE_CACHE.has(CUR_PAGE)){
+    $('#results').innerHTML =
+      '<div class="empty"><span class="loading"></span><h3>读取第 ' + CUR_PAGE + ' 页…</h3></div>';
+  }
+
+  try{
+    let items, pages;
+    if (PAGE_CACHE.has(CUR_PAGE)){
+      const c = PAGE_CACHE.get(CUR_PAGE);
+      items = c.items; pages = c.pages;
+    } else {
+      const j = await api('/api/search?q=' + encodeURIComponent(q) +
+                          '&page=' + CUR_PAGE);
+      items = j.items || [];
+      pages = j.pages || 1;
+      PAGE_CACHE.set(CUR_PAGE, {items, pages});
+    }
+    TOTAL_PAGES = pages;
+    renderResults(items, q);
+    renderPager();
+    $('#results').scrollTop = 0;
+  }catch(e){
+    $('#results').innerHTML =
+      `<div class="empty"><h3 style="color:#ff6b70">搜索失败</h3>
+       <p>${escText(e.message)}</p></div>`;
+    $('#cnt').textContent = '';
+  }
+}
+
+function renderResults(items, q){
+  if (!items.length){
+    $('#results').innerHTML =
+      `<div class="empty"><h3>这一页没有内容</h3>
+       <p>换个番号或关键词试试，也可以是完整 URL。</p></div>`;
+    $('#cnt').textContent = '0 条';
+    return;
+  }
+  $('#cnt').textContent = `第 ${CUR_PAGE} / ${TOTAL_PAGES} 页 · 本页 ${items.length} 条`;
+
+  const box = $('#results');
+  box.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  items.forEach(it => {
+    const d = document.createElement('div');
+    d.className = 'card';
+    d.dataset.id = it.id;
+    if (CUR && CUR.id === it.id) d.classList.add('selected');
+    const isUnc = it.censor === 'uncensored';
+    const badge = isUnc
+      ? `<span class="badge unc">无码</span>`
+      : `<span class="badge cen">有码</span>`;
+    // onerror 用属性内单引号 + HTML 实体,避免破坏属性边界(此前踩过转义引号打乱 DOM)
+    const img = it.cover
+      ? `<img src="${escAttr(it.cover)}" loading="lazy" referrerpolicy="no-referrer"
+             onerror="this.style.display='none';this.parentNode.innerHTML='<div class=&quot;ph&quot;>无封面</div>'">`
+      : `<div class="ph">无封面</div>`;
+    d.innerHTML = `
+      <div class="thumb">
+        ${img}
+        ${badge}
+        ${it.duration ? `<span class="badge dur">${escText(it.duration)}</span>` : ''}
+        ${it.chinese_sub ? `<span class="badge chs">中文字幕</span>` : ''}
+        <button class="fav-btn${FAV_SET.has(it.id)?' on':''}" title="${FAV_SET.has(it.id)?'取消收藏':'加入收藏'}">${FAV_SET.has(it.id)?'★':'☆'}</button>
+        <button class="info-btn" title="查看简介与完整信息">i</button>
+      </div>
+      <div class="cbody">
+        <div class="cid">${escText(it.id)}</div>
+        <div class="ctitle">${escText(it.title || '（无标题）')}</div>
+      </div>
+      <div class="pick">已选 · 点右侧下载</div>`;
+    d.onclick = (ev) => {
+      if (ev.target.closest('.info-btn')){ ev.stopPropagation(); openInfo(it); return; }
+      if (ev.target.closest('.fav-btn')){ ev.stopPropagation(); toggleFav(it); return; }
+      selectItem(it);
+    };
+    frag.appendChild(d);
+  });
+  box.appendChild(frag);
+}
+
+/* ---------------- 分页器 ------------------- */
+function renderPager(){
+  const pager = $('#pager');
+  if (!pager) return;
+  if (TOTAL_PAGES <= 1){
+    pager.innerHTML = '';
+    return;
+  }
+  const cur = CUR_PAGE, last = TOTAL_PAGES;
+  const parts = [];
+  const btn = (p, label, dis, act) =>
+    `<button class="pgbtn${act?' on':''}" ${dis?'disabled':''} data-p="${p}">${label}</button>`;
+
+  parts.push(btn(cur - 1, '‹ 上一页', cur <= 1, false));
+  // 页码窗口:1 ... cur-2..cur+2 ... last
+  const win = new Set([1, last]);
+  for (let p = cur - 2; p <= cur + 2; p++) if (p >= 1 && p <= last) win.add(p);
+  const sorted = Array.from(win).sort((a,b) => a-b);
+  let prev = 0;
+  for (const p of sorted){
+    if (p - prev > 1) parts.push('<span class="pggap">…</span>');
+    parts.push(btn(p, p, false, p === cur));
+    prev = p;
+  }
+  parts.push(btn(cur + 1, '下一页 ›', cur >= last, false));
+  pager.innerHTML = parts.join('');
+
+  pager.querySelectorAll('.pgbtn[data-p]').forEach(b => {
+    b.onclick = () => {
+      const p = parseInt(b.dataset.p, 10);
+      if (p < 1 || p > TOTAL_PAGES || p === CUR_PAGE) return;
+      gotoPage(p);
+    };
+  });
+}
+
+/* 按当前数据来源翻页 */
+function gotoPage(p){
+  if (CUR_SRC.kind === 'search') return doSearch(p);
+  if (CUR_SRC.kind === 'section') return openSection(CUR_SRC.value, p);
+  if (CUR_SRC.kind === 'genre') return openGenre(CUR_SRC.value, p);
+  if (CUR_SRC.kind === 'genreMulti') return openTags(p);
+  if (CUR_SRC.kind === 'fav') return openFavorites(p);
+}
+
+/* 当前选中标签快照(用于请求) */
+function CUR_SEL_TAGS(){ return Array.from(TAG_SEL); }
+
+/* ---------------- 选中 & 详情 ---------------- */
+async function selectItem(it){
+  CUR = it; QUAL = 'best';
+  document.querySelectorAll('.card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.id === it.id);
+  });
+  // 手机上右侧面板是底部抽屉,选了卡片就弹出来
+  if (isMobile()) openPanel();
+  $('#detail').innerHTML = '<div class="empty"><span class="loading"></span><h3>解析播放源…</h3></div>';
+  try{
+    const p = await api('/api/probe?url=' + encodeURIComponent(it.url));
+    renderDetail(p, it);
+  }catch(e){
+    $('#detail').innerHTML = `<div class="empty"><h3 style="color:#ff6b70">解析失败</h3><p>${e.message}</p></div>`;
+  }
+}
+
+/* ---------------- 手机端抽屉 ---------------- */
+function isMobile(){
+  return window.matchMedia('(max-width:720px)').matches;
+}
+function openPanel(){
+  if (!isMobile()) return;
+  const r = $('#right');
+  if (r) r.classList.add('mopen');
+}
+function closePanel(){
+  const r = $('#right');
+  if (r) r.classList.remove('mopen');
+}
+
+function renderDetail(p, it){
+  const info = p.info || {};
+  CUR_INFO = info;                       // 供下载时把标题/封面/分类写进历史
+  const qs = p.qualities || [];
+  const variants = p.variants || [];
+  const isUnc = info.censor === 'uncensored';
+  const hero = it.cover ? `<div class="dt-hero"><img src="${it.cover}" referrerpolicy="no-referrer"></div>` : '';
+
+  // 片源标识:同一番号的无码版与有码版如果是同一套片源,uuid 会完全相同。
+  // 这种情况下"下了无码还是有码"不是工具的问题,而是站点给的就这一套。
+  const streamId = p.stream_id || '';
+  let sameSourceWarn = '';
+  if (streamId && CUR_STREAM && CUR_SLUG_BASE){
+    const sameBase = (info.id || '').replace(/-uncensored-leak$/, '') === CUR_SLUG_BASE;
+    const sameStream = streamId === CUR_STREAM;
+    if (sameBase && sameStream && (info.id || '') !== CUR_SLUG_FULL){
+      sameSourceWarn = `<div class="samesrc">
+        ⚠ 这个"另一个版本"用的片源和刚看的一样（${escText(streamId.slice(0,8))}），
+        下载下来内容会完全相同。站点上这两个页面共用了同一套视频流。
+      </div>`;
+    }
+  }
+  // 记住这次的片源,供下次切换时比对
+  if (streamId){
+    CUR_STREAM = streamId;
+    CUR_SLUG_BASE = (info.id || '').replace(/-uncensored-leak$/, '');
+    CUR_SLUG_FULL = info.id || '';
+  }
+
+  let qhtml = '';
+  if (qs.length){
+    qhtml = `<div class="sect"><div class="lab">清晰度</div><div class="qlist">` +
+      qs.map((q,i) => {
+        const val = q.height ? q.height + 'p' : 'best';
+        const bw = q.bandwidth ? `<span class="bw">${(q.bandwidth/1e6).toFixed(1)}M</span>` : '';
+        const on = (i === 0) ? ' on' : '';
+        return `<div class="qbtn${on}" data-q="${val}">${q.label}${bw}</div>`;
+      }).join('') + `</div></div>`;
+    QUAL = qs[0].height ? qs[0].height + 'p' : 'best';
+  }
+
+  // 变体:去掉当前正在看的这一条,只列"其他版本"
+  // 注意用规范化后的 slug 比对(去掉末尾斜杠/查询串),否则会误删掉另一版本
+  const curId = (info.id || it.id || '').toLowerCase();
+  const others = variants.filter(v => {
+    let vslug = (v.url || '').split('?')[0].replace(/\/$/, '').split('/').pop() || '';
+    return vslug.toLowerCase() !== curId;
+  });
+  const vhtml = others.length ? `<div class="sect"><div class="lab">该番号的其他版本</div>
+    <div class="qlist">` + others.map(v =>
+      `<div class="qbtn" data-vurl="${v.url}" title="${v.label}">${v.label}</div>`
+    ).join('') + `</div></div>` : '';
+
+  $('#detail').innerHTML = `
+    ${hero}
+    <div class="dt-id">${info.id || it.id}</div>
+    <h2>${(info.title || it.title || '').replace(/\s*-\s*MissAV.*$/,'')}</h2>
+    <div class="meta">
+      <span class="chip ${isUnc?'unc':''}">${isUnc?'无码':'有码 / 马赛克'}</span>
+      ${info.duration ? `<span class="chip">${info.duration}</span>` : ''}
+      ${streamId ? `<span class="chip" title="片源标识：两个版本若相同则内容完全一致">片源 ${streamId.slice(0,8)}</span>` : ''}
+    </div>
+    ${sameSourceWarn}
+    ${qhtml}
+    ${vhtml}
+    <div class="row2">
+      <button class="dtplay" id="btnPlay">▶ 在线观看</button>
+      <button class="dtfav${FAV_SET.has(info.id||it.id)?' on':''}" id="dtFav">${FAV_SET.has(info.id||it.id)?'★ 已收藏（点击取消）':'☆ 加入收藏'}</button>
+    </div>
+    <div class="sect">
+      <div class="lab">下载到</div>
+      <div class="drives" id="drives"></div>
+      <div class="pathbox">
+        <input id="outdir" value="${ENV.default_out || ''}" spellcheck="false">
+        <button class="btn sm" id="btnGo" title="转到该路径">转到</button>
+        <button class="btn sm" id="btnPick" title="用系统对话框选择文件夹">选择…</button>
+      </div>
+      <div class="dirlist" id="dirlist"></div>
+      <div class="free" id="freeinfo"></div>
+      <div id="cachebox"></div>
+    </div>
+    <div class="netrow">
+      <label class="netchk" title="勾选后分片也走代理（默认分片直连：CDN 多数可直连，代理只用于抓页面）">
+        <input type="checkbox" id="noDirect"> 分片也走代理
+      </label>
+      <span class="nethint" id="netHint"></span>
+    </div>
+    <button class="btn primary" id="btnDl" style="width:100%;justify-content:center;padding:12px">
+      开始下载
+    </button>
+    <div style="margin-top:9px;font-size:11.5px;color:var(--fg3);line-height:1.6">
+      并发 <select id="threads" style="background:#1c242e;border:1px solid #2a3441;
+        border-radius:5px;padding:2px 6px;color:#e6edf3">
+        <option>8</option><option selected>16</option><option>24</option><option>32</option>
+      </select> 线程 · 断点续传已开启
+    </div>`;
+
+  // 清晰度点击
+  $('#detail').querySelectorAll('.qbtn[data-q]').forEach(b => {
+    b.onclick = () => {
+      $('#detail').querySelectorAll('.qbtn[data-q]').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      QUAL = b.dataset.q;
+    };
+  });
+  // 其他版本点击 => 切过去
+  $('#detail').querySelectorAll('.qbtn[data-vurl]').forEach(b => {
+    b.onclick = () => {
+      const u = b.dataset.vurl;
+      selectItem({ id: u.split('/').pop(), url: u, title: it.title,
+                   cover: it.cover, censor: 'uncensored' });
+    };
+  });
+
+  $('#btnGo').onclick = () => browse($('#outdir').value.trim());
+  $('#btnPick').onclick = pickFolder;
+  $('#btnPlay').onclick = () => openPlayerPage(info, it, currentQualityLabel());
+  $('#dtFav').onclick = () => toggleFav({
+    id: info.id || it.id, title: info.full_title || info.title || it.title,
+    url: info.url || it.url, cover: it.cover,
+    censor: info.censor, duration: info.duration,
+    chinese_sub: it.chinese_sub,
+  });
+  $('#btnDl').onclick = () => startDownload(info.id || it.id, info.url || it.url);
+  const nd = $('#noDirect');
+  if (nd) nd.onchange = () => {
+    toast(nd.checked ? '分片将走代理（速度受代理带宽限制）'
+                     : '分片走直连（推荐，代理只用于抓页面）', 'ok');
+  };
+  checkConnectivity();
+  loadDrives();
+  browse($('#outdir').value.trim() || ENV.default_out);
+}
+
+/* ---------------- 盘符切换 ---------------- */
+let DRIVES = [];
+async function loadDrives(){
+  try{
+    const j = await api('/api/drives');
+    DRIVES = j.drives || [];
+    renderDrives();
+  }catch(e){ DRIVES = []; }
+}
+
+function renderDrives(){
+  const box = $('#drives');
+  if (!box) return;
+  if (!DRIVES.length){
+    box.innerHTML = `<span style="color:#6b7785;font-size:11.5px">未检测到可用磁盘</span>`;
+    return;
+  }
+  const cur = ($('#outdir') && $('#outdir').value || '').trim().toUpperCase();
+  box.innerHTML = DRIVES.map(d => {
+    const on = cur.startsWith(d.label.toUpperCase());
+    const free = d.free ? fmtBytes(d.free) : '';
+    const tip = `${d.path}${d.total ? '  总 ' + fmtBytes(d.total) : ''}`;
+    return `<div class="drv${on?' on':''}${d.writable===false?' dis':''}" data-p="${d.path}" title="${tip}">
+      ${d.label}${free ? `<span class="sz">${free}</span>` : ''}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.drv').forEach(el => {
+    if (el.classList.contains('dis')) return;
+    el.onclick = () => {
+      const p = el.dataset.p;
+      if ($('#outdir')) $('#outdir').value = p;
+      browse(p);
+    };
+  });
+}
+
+/* ---------------- 系统"选择文件夹"对话框 ---------------- */
+async function pickFolder(){
+  // 桌面版:走 pywebview 的 js_api(原生对话框,必须在 UI 线程)
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder){
+    try{
+      const path = await window.pywebview.api.pick_folder();
+      if (path){
+        if ($('#outdir')) $('#outdir').value = path;
+        browse(path);
+        toast('已选择: ' + path, 'ok');
+      }
+    }catch(e){
+      toast('打开选择框失败: ' + e, 'err');
+    }
+    return;
+  }
+  // 浏览器模式:退回后端(后端用 ctypes 调 shell32,可能弹不出,但有兜底)
+  const cur = ($('#outdir') && $('#outdir').value.trim()) || '';
+  try{
+    const j = await api('/api/pick_folder?initial=' + encodeURIComponent(cur));
+    if (j.path){
+      if ($('#outdir')) $('#outdir').value = j.path;
+      browse(j.path);
+      toast('已选择: ' + j.path, 'ok');
+    }
+  }catch(e){
+    toast('浏览器模式无法弹系统对话框，请直接输入路径或点上方盘符', 'err');
+  }
+}
+
+/* ---------------- 目录浏览 ---------------- */
+async function browse(path){
+  try{
+    const j = await api('/api/browse?path=' + encodeURIComponent(path || ''));
+    DIRS = j;
+    if ($('#outdir')) $('#outdir').value = j.path;
+    const dl = $('#dirlist');
+    if (!dl) return;
+    let html = '';
+    if (j.parent){
+      html += `<div class="dirrow up" data-p="${j.parent}">
+        <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        <span class="nm">返回上级</span></div>`;
+    }
+    j.dirs.forEach(d => {
+      html += `<div class="dirrow" data-p="${d.path}">
+        <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg>
+        <span class="nm">${d.name}</span></div>`;
+    });
+    dl.innerHTML = html || '<div style="padding:12px;color:#6b7785;font-size:12px">（无子目录）</div>';
+    dl.querySelectorAll('.dirrow').forEach(r => {
+      r.onclick = () => browse(r.dataset.p);
+    });
+    const fi = $('#freeinfo');
+    if (fi){
+      const free = j.free ? fmtBytes(j.free) : '未知';
+      fi.innerHTML = `<span>${j.writable ? '✓ 可写入' : '✗ 不可写入'}</span>
+                      <span>可用 ${free}</span>`;
+      fi.style.color = j.writable ? '' : '#ff6b70';
+    }
+    // 当前目录变了,盘符栏高亮跟着变
+    if (DRIVES.length) renderDrives();
+    checkCache(j.path);
+  }catch(e){
+    toast('目录读取失败: ' + e.message, 'err');
+  }
+}
+
+/* ---------------- 下载 ---------------- */
+async function startDownload(id, url){
+  const out = ($('#outdir') && $('#outdir').value.trim()) || ENV.default_out;
+  const threads = parseInt(($('#threads') && $('#threads').value) || 16, 10);
+  try{
+    await api('/api/download', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        id, url, out_dir: out, quality: QUAL, threads,
+        slug: id,
+        no_direct: !!($('#noDirect') && $('#noDirect').checked),
+        title: (CUR && CUR.title) || (CUR_INFO && CUR_INFO.title) || null,
+        censor: (CUR && CUR.censor) || null,
+        cover: (CUR && CUR.cover) || null,
+      })
+    });
+    toast('已加入下载队列', 'ok');
+    refreshTasks();
+  }catch(e){
+    toast('下载启动失败: ' + e.message, 'err');
+  }
+}
+
+/* ---------------- 任务 ---------------- */
+let timer = null;
+async function refreshTasks(){
+  try{
+    const j = await api('/api/tasks');
+    renderTasks(j.tasks);
+  }catch(e){ /* 静默 */ }
+}
+
+function renderTasks(tasks){
+  $('#tcnt').textContent = tasks.length ? `${tasks.length} 个` : '';
+  const box = $('#tasks');
+  if (!tasks.length){
+    box.innerHTML = '<div style="padding:14px;text-align:center;color:#6b7785;font-size:12px">暂无任务</div>';
+    return;
+  }
+  tasks.sort((a,b) => (b.created||0)-(a.created||0));
+  box.innerHTML = tasks.map(t => {
+    const stMap = {queued:['queued','排队'], running:['run','下载中'],
+                   done:['done','完成'], error:['err','失败']};
+    const [cls,txt] = stMap[t.status] || ['queued', t.status];
+    const pct = Math.round((t.progress||0)*100);
+    const name = t.name || (t.url ? t.url.split('/').pop() : t.id);
+    const seg = t.total_seg ? `${t.done_seg||0}/${t.total_seg} 分片` : '';
+    const sz = t.size ? fmtBytes(t.size) : (t.bytes ? fmtBytes(t.bytes) : '');
+    // 拼接/转封装阶段没有分片进度,用"处理中"脉冲条代替,避免看起来卡死
+    const busy = t.status === 'running' && (t.phase === 'remux' || t.phase === 'concat');
+    const barCls = busy ? 'bar busy' : 'bar';
+    return `<div class="task">
+      <div class="trow">
+        <span class="tname" title="${name}">${name}</span>
+        <span class="st ${cls}">${txt}</span>
+      </div>
+      <div class="${barCls}"><i style="width:${busy ? 100 : pct}%"></i></div>
+      <div class="tsub">
+        <span>${t.status==='running' ? (t.message || seg) : (t.status==='done' ? '已保存' : t.message)}</span>
+        <span>${t.status==='running' ? (busy ? '处理中' : pct+'%') : sz}</span>
+      </div>
+      ${t.error ? `<div class="terr">${t.error}</div>` : ''}
+      ${t.status==='done' && t.file ? `<div class="tsub" style="margin-top:4px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.file}">${t.file}</span></div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+/* ---------------- 残留分片缓存 ---------------- */
+async function checkCache(path){
+  const box = $('#cachebox');
+  if (!box) return;
+  try{
+    const j = await api('/api/cache?path=' + encodeURIComponent(path));
+    const items = j.items || [];
+    if (!items.length){ box.innerHTML = ''; return; }
+    const done = items.filter(x => x.finished).length;
+    const total = j.total_bytes || 0;
+    box.innerHTML = `<div class="cachetip">
+      <span class="txt">发现 <b>${items.length}</b> 组分片缓存，占用 <b>${fmtBytes(total)}</b>
+      ${done ? `（其中 ${done} 组已有成品，可安全删除）` : '（可能来自中断的任务）'}</span>
+      <button id="btnClean">清理</button>
+    </div>`;
+    $('#btnClean').onclick = () => cleanCache(path);
+  }catch(e){ box.innerHTML = ''; }
+}
+
+async function cleanCache(path){
+  const b = $('#btnClean');
+  if (b){ b.textContent = '清理中…'; b.disabled = true; }
+  try{
+    const j = await api('/api/cache/clean?path=' + encodeURIComponent(path));
+    toast(`已清理 ${j.removed.length} 组，释放 ${fmtBytes(j.freed)}`, 'ok');
+    if (j.problems && j.problems.length) toast('部分未清理: ' + j.problems[0], 'err');
+    checkCache(path);
+    browse(path);
+  }catch(e){
+    toast('清理失败: ' + e.message, 'err');
+    if (b){ b.textContent = '清理'; b.disabled = false; }
+  }
+}
+
+/* ---------------- 下载历史 ---------------- */
+let HIST_OPEN = false;
+
+async function openHistory(){
+  $('#histDrawer').classList.add('open');
+  HIST_OPEN = true;
+  await loadHistory();
+  // 首次打开且历史为空时,自动扫一遍当前下载目录,把已有视频补进来
+  if (!_histScanned){
+    _histScanned = true;
+    const cur = ($('#outdir') && $('#outdir').value.trim()) || ENV.default_out;
+    if (cur) await scanHistory(cur, true);
+  }
+}
+
+let _histScanned = false;
+
+async function scanHistory(path, silent){
+  try{
+    const j = await api('/api/history/scan?path=' + encodeURIComponent(path), {method:'POST'});
+    const n = (j.imported || []).length;
+    if (n > 0){
+      toast(`已从目录补录 ${n} 条历史`, 'ok');
+      await loadHistory();
+    } else if (!silent){
+      toast('该目录没有可补录的视频', 'ok');
+    }
+  }catch(e){
+    if (!silent) toast('扫描失败: ' + e.message, 'err');
+  }
+}
+
+function closeHistory(){
+  $('#histDrawer').classList.remove('open');
+  HIST_OPEN = false;
+}
+
+async function loadHistory(){
+  const q = ($('#histQ') && $('#histQ').value.trim()) || '';
+  const f = ($('#histFilter') && $('#histFilter').value) || '';
+  try{
+    const j = await api('/api/history?q=' + encodeURIComponent(q) +
+                        '&filter=' + encodeURIComponent(f));
+    renderHistory(j.items || [], j.stats || {});
+  }catch(e){
+    $('#histList').innerHTML = `<div class="hempty">读取历史失败：${e.message}</div>`;
+  }
+}
+
+function renderHistory(items, stats){
+  const s = stats || {};
+  $('#histStats').textContent =
+    `${s.done || 0} 条已完成 · 共 ${fmtBytes(s.bytes || 0)}`;
+  const box = $('#histList');
+  if (!items.length){
+    box.innerHTML = `<div class="hempty">还没有下载记录。<br>下载完成或失败的片子会自动记在这里。</div>`;
+    return;
+  }
+  box.innerHTML = items.map(it => {
+    const title = it.title || it.slug || '';
+    const isUnc = it.censor === 'uncensored';
+    let badge = '';
+    if (it.status === 'error') badge = `<span class="hbadge error">失败</span>`;
+    else if (it.missing) badge = `<span class="hbadge missing">文件已删</span>`;
+    else if (it.status === 'done') badge = `<span class="hbadge done">已完成</span>`;
+    // 注意:onerror 里如果写转义引号会在模板字符串里产生畸形 HTML,
+    // 导致后续 innerHTML 解析错乱(实测整条记录的文本都被破坏了)。
+    // 改用单引号包裹属性值,内层用 HTML 实体,安全且不会打断属性边界。
+    const cover = it.cover
+      ? '<img src="' + escAttr(it.cover) + '" loading="lazy" '
+        + 'referrerpolicy="no-referrer" '
+        + 'onerror="this.style.display=\'none\';this.parentNode.innerHTML='
+        + '\'&lt;div class=&quot;ph&quot;&gt;无图&lt;/div&gt;\'">'
+      : `<div class="ph">无图</div>`;
+    const size = it.size ? fmtBytes(it.size) : '';
+    const time = it.finished ? new Date(it.finished * 1000).toLocaleString('zh-CN',
+                    {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    return `<div class="hitem">
+      <div class="hthumb">${cover}</div>
+      <div class="hmain">
+        <div class="hrow">
+          <span class="hslug">${escText(it.slug)}</span>
+          ${it.quality ? `<span class="hmeta">${escText(it.quality)}</span>` : ''}
+          ${isUnc ? `<span class="hmeta" style="color:#ff6b70">无码</span>` : ''}
+          ${badge}
+        </div>
+        <div class="htitle" title="${escAttr(title)}">${escText(title)}</div>
+        <div class="hmeta">
+          ${size ? `<span>${size}</span>` : ''}
+          ${time ? `<span>${time}</span>` : ''}
+        </div>
+        <div class="hact">
+          ${it.status === 'done' && it.file && !it.missing
+            ? `<button data-open="${encodeURIComponent(it.file)}">打开目录</button>
+               <button data-copy="${encodeURIComponent(it.file)}">复制路径</button>` : ''}
+          ${it.url ? `<button data-redl="${encodeURIComponent(it.url)}"
+                       data-q="${it.quality || 'best'}">重新下载</button>` : ''}
+          <button class="del" data-del="${encodeURIComponent(it.id)}">删除记录</button>
+        </div>
+        ${it.error ? `<div class="hmeta" style="color:#ff6b70">${it.error}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('button[data-open]').forEach(b => {
+    b.onclick = () => openFolder(decodeURIComponent(b.dataset.open));
+  });
+  box.querySelectorAll('button[data-copy]').forEach(b => {
+    b.onclick = () => copyText(decodeURIComponent(b.dataset.copy));
+  });
+  box.querySelectorAll('button[data-redl]').forEach(b => {
+    b.onclick = () => redownload(decodeURIComponent(b.dataset.redl), b.dataset.q);
+  });
+  box.querySelectorAll('button[data-del]').forEach(b => {
+    b.onclick = () => deleteHistory(decodeURIComponent(b.dataset.del));
+  });
+}
+
+async function deleteHistory(id){
+  try{
+    await api('/api/history/delete?id=' + encodeURIComponent(id), {method:'POST'});
+    toast('已删除记录', 'ok');
+    loadHistory();
+  }catch(e){ toast('删除失败: ' + e.message, 'err'); }
+}
+
+async function redownload(url, quality){
+  toast('准备重新下载…');
+  // 走正常下载流程,复用当前选择的目录
+  const out = ($('#outdir') && $('#outdir').value.trim()) || ENV.default_out;
+  try{
+    await api('/api/download', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ url, out_dir: out, quality: quality || 'best', threads: 16 })
+    });
+    toast('已加入下载队列', 'ok');
+    refreshTasks();
+    closeHistory();
+  }catch(e){ toast('重新下载失败: ' + e.message, 'err'); }
+}
+
+async function openFolder(file){
+  // 桌面版用原生接口;浏览器模式给出路径
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.open_folder){
+    try{ await window.pywebview.api.open_folder(file); return; }catch(e){}
+  }
+  copyText(file);
+  toast('已复制文件路径，可在资源管理器粘贴打开', 'ok');
+}
+
+function copyText(t){
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(
+      () => toast('已复制', 'ok'),
+      () => toast('复制失败，手动选择: ' + t, 'err')
+    );
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); toast('已复制', 'ok'); }
+    catch(e){ toast('复制失败', 'err'); }
+    ta.remove();
+  }
+}
+
+/* ---------------- 自适应列数 ---------------- */
+// 按可用宽度和"单卡最小可读宽度"算列数,而不是让 CSS 的 auto-fill 隐式决定。
+const CARD_MIN = 230;          // 卡片最小可读宽度
+function applyCols(){
+  const box = $('#results');
+  if (!box) return;
+  const sel = $('#perPage');
+  const pref = sel && sel.value;
+  let cols;
+  if (pref && pref !== 'auto'){
+    cols = parseInt(pref, 10) || 4;
+  } else {
+    const w = box.clientWidth - 40;       // 去掉内边距
+    cols = Math.max(2, Math.min(8, Math.floor(w / CARD_MIN)));
+  }
+  box.style.setProperty('--cols', cols);
+  // 分页器上的列数提示
+  const hint = $('#colHint');
+  if (hint) hint.textContent = cols + ' 列';
+}
+window.addEventListener('resize', () => {
+  clearTimeout(window._rzT);
+  window._rzT = setTimeout(applyCols, 120);
+});
+
+/* ---------------- 简介 / 完整信息 ---------------- */
+async function openInfo(it){
+  $('#infoModal').classList.add('open');
+  $('#mTitle').textContent = it.id || '详情';
+  $('#mBody').innerHTML = '<div style="text-align:center;padding:24px"><span class="loading"></span> 读取完整信息…</div>';
+  try{
+    const j = await api('/api/detail?id=' + encodeURIComponent(it.id) +
+                        '&url=' + encodeURIComponent(it.url || ''));
+    renderInfo(it, j);
+  }catch(e){
+    $('#mBody').innerHTML =
+      `<div class="msg err">读取失败：${escText(e.message)}</div>`;
+  }
+}
+
+function renderInfo(it, j){
+  const info = (j && j.info) || {};
+  const isUnc = (info.censor || it.censor) === 'uncensored';
+  const cover = it.cover || '';
+  const chs = [];
+  chs.push(`<span class="mchip ${isUnc?'unc':''}">${isUnc?'无码':'有码 / 马赛克'}</span>`);
+  if (info.release) chs.push(`<span class="mchip">发行 ${escText(info.release)}</span>`);
+  if (info.duration) chs.push(`<span class="mchip">时长 ${escText(info.duration)}</span>`);
+  if (it.chinese_sub) chs.push(`<span class="mchip">中文字幕</span>`);
+  if (j && j.stream_id) chs.push(`<span class="mchip" title="片源标识">片源 ${escText(String(j.stream_id).slice(0,8))}</span>`);
+  for (const g of (info.genres || [])) chs.push(`<span class="mchip">${escText(g)}</span>`);
+
+  const actors = (info.actresses || []).length
+    ? `<div class="msect">演员</div><div class="mmeta">${
+        info.actresses.map(a => `<span class="mchip">${escText(a)}</span>`).join('')
+      }</div>`
+    : '';
+
+  const syn = info.synopsis
+    ? `<div class="msect">简介</div><div class="msyn">${escText(info.synopsis)}</div>`
+    : `<div class="msect">简介</div><div class="msyn">这个页面没有提供简介。</div>`;
+
+  $('#mBody').innerHTML = `
+    ${cover ? `<div class="mhero"><img src="${escAttr(cover)}" referrerpolicy="no-referrer"></div>` : ''}
+    <div>
+      <div class="mq">${escText(info.id || it.id || '')}</div>
+      <div class="mfull">${escText(info.full_title || info.title || it.title || '')}</div>
+    </div>
+    <div class="mmeta">${chs.join('')}</div>
+    ${actors}
+    ${syn}
+    <div class="mact">
+      <button class="btn primary" id="mDl">用这个版本下载</button>
+      <button class="btn" id="mSel">在右侧打开</button>
+    </div>`;
+
+  $('#mDl').onclick = () => { closeInfo(); selectItem(it).then(() => {
+    const b = $('#btnDl'); if (b) b.click();
+  }); };
+  $('#mSel').onclick = () => { closeInfo(); selectItem(it); };
+}
+
+function closeInfo(){ $('#infoModal').classList.remove('open'); }
+
+/* ---------------- 收藏 ---------------- */
+let FAV_SET = new Set();
+
+async function loadFavSet(){
+  try{
+    const j = await api('/api/favorites');
+    FAV_SET = new Set((j.items || []).map(x => x.slug));
+    const fc = $('#favCnt');
+    if (fc) fc.textContent = FAV_SET.size ? `(${FAV_SET.size})` : '';
+  }catch(e){ /* 静默 */ }
+}
+
+async function toggleFav(it){
+  const slug = it.id || it.slug;
+  if (!slug) return;
+  try{
+    const j = await api('/api/favorite/toggle', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        slug, title: it.title || '', url: it.url || '',
+        cover: it.cover || '', censor: it.censor || null,
+        duration: it.duration || '', quality: it.quality || '',
+        chinese_sub: !!it.chinese_sub,
+      })
+    });
+    if (j.favorited){ FAV_SET.add(slug); toast('已加入收藏', 'ok'); }
+    else { FAV_SET.delete(slug); toast('已取消收藏', 'ok'); }
+    const fc = $('#favCnt');
+    if (fc) fc.textContent = FAV_SET.size ? `(${FAV_SET.size})` : '';
+    // 就地更新卡片按钮
+    document.querySelectorAll('.card').forEach(c => {
+      if (c.dataset.id === slug){
+        const b = c.querySelector('.fav-btn');
+        if (b){
+          const on = FAV_SET.has(slug);
+          b.classList.toggle('on', on);
+          b.textContent = on ? '★' : '☆';
+          b.title = on ? '取消收藏' : '加入收藏';
+        }
+      }
+    });
+    if (CUR && (CUR.id === slug)) renderFavBtnState();
+    if (CUR_SRC.kind === 'fav') openFavorites();
+  }catch(e){ toast('收藏操作失败: ' + e.message, 'err'); }
+}
+
+function renderFavBtnState(){
+  const b = $('#dtFav');
+  if (!b || !CUR) return;
+  const on = FAV_SET.has(CUR.id);
+  b.classList.toggle('on', on);
+  b.textContent = on ? '★ 已收藏（点击取消）' : '☆ 加入收藏';
+}
+
+/* ---------------- 在线观看（独立播放页） ----------------
+   播放页 = static/player.html，独立窗口/标签，与主界面完全解耦：
+     * 主界面不加载 video、不持有 HLS 实例 -> 播放时主界面照常可用
+     * 播放页只从 URL 拿参数，不依赖主界面状态 -> 关掉主界面它也能播
+*/
+function b64e(s){
+  // URL 安全 base64:避免 m3u8/Referer 里的 & ? 破坏参数
+  return btoa(unescape(encodeURIComponent(String(s || '')))
+  ).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+function playerUrl(info, it, quality){
+  const i = info || {};
+  const playlist = i.playlist || '';
+  const referer = i.url || (it && it.url) || '';
+  if (!playlist) return '';
+  const p = new URLSearchParams();
+  p.set('u', b64e(playlist));
+  if (referer) p.set('r', b64e(referer));
+  p.set('t', (i.id || (it && it.id) || ''));
+  const name = i.full_title || i.title || (it && it.title) || '';
+  if (name) p.set('n', b64e(name));
+  if (quality) p.set('q', quality);
+  return '/player?' + p.toString();
+}
+
+function isDesktopApp(){
+  return !!(window.pywebview && window.pywebview.api);
+}
+
+function openPlayerPage(info, it, quality){
+  const u = playerUrl(info, it, quality);
+  if (!u){
+    toast('没有拿到播放源，先点按卡片解析', 'err');
+    return;
+  }
+  // 桌面版:请求原生独立窗口(与主窗口互不阻塞)
+  if (isDesktopApp() && window.pywebview.api.open_player){
+    window.pywebview.api.open_player(u).then((ok) => {
+      if (!ok) window.open(u, '_blank', 'noopener');
+    }).catch(() => window.open(u, '_blank', 'noopener'));
+    return;
+  }
+  // 浏览器/手机:开新标签页(主界面保持原状,不被阻塞)
+  const w = window.open(u, '_blank', 'noopener');
+  if (!w) toast('浏览器拦截了新窗口，请允许弹出窗口后重试', 'err');
+}
+
+/* 当前选中的清晰度文字 */
+function currentQualityLabel(){
+  const on = document.querySelector('#detail .qbtn.on');
+  return on ? (on.dataset.q || '') : (QUAL || 'best');
+}
+
+/* ---------------- 通路检测 ---------------- */
+// 站点通路与 CDN 通路在真实网络里经常不一样:
+//   站点被断 / CDN 直连通 -> 搜索要代理,下载主体可以直连(默认就是这模式)
+//   两者都通              -> 完全不需要代理
+//   两者都断              -> 必须靠代理
+let NET_REPORT = null;
+
+async function checkConnectivity(){
+  const el = $('#netHint');
+  if (el) el.textContent = '检测通路…';
+  // 放到下一轮事件循环再发请求:这是纯展示信息,
+  // 绝不能让它拖慢页面首屏(实测同步探测会把 goto 卡到超时)。
+  await new Promise(r => setTimeout(r, 0));
+  try{
+    const j = await api('/api/connectivity');
+    NET_REPORT = j;
+    renderNetHint(j);
+  }catch(e){
+    if (el) el.textContent = '';
+  }
+}
+
+function renderNetHint(j){
+  const el = $('#netHint');
+  if (!el) return;
+  const parts = [];
+  const siteOk = j.site || j.site_direct;
+  const cdnOk = j.cdn || j.cdn_direct;
+
+  if (j.site_direct) parts.push('站点直连可用');
+  else if (j.site) parts.push('站点经代理可用');
+  else parts.push('站点不可达（搜索需代理）');
+
+  if (j.cdn_direct) parts.push('分片可直连');
+  else if (j.cdn) parts.push('分片需代理');
+  else parts.push('分片不可达');
+
+  // 颜色按"整体能不能干活"决定
+  if (siteOk && cdnOk){
+    el.style.color = j.cdn_direct && j.site_direct ? 'var(--ok)' : 'var(--warn)';
+  } else {
+    el.style.color = 'var(--acc2)';
+  }
+  el.textContent = parts.join(' · ');
+  el.title = `站点直连=${j.site_direct} 站点经代理=${j.site} `
+           + `CDN直连=${j.cdn_direct} CDN经代理=${j.cdn}`;
+}
+
+/* ---------------- 导入外部链接 ---------------------------- */
+let IMP_ITEMS = [];
+let IMP_OPEN = false;
+
+function openImport(){
+  const m = $('#impModal');
+  if (m) m.classList.add('open');
+  IMP_OPEN = true;
+  const t = $('#impText');
+  if (t) setTimeout(() => t.focus(), 60);
+}
+
+function closeImport(){
+  const m = $('#impModal');
+  if (m) m.classList.remove('open');
+  IMP_OPEN = false;
+}
+
+async function checkImports(){
+  const raw = ($('#impText') && $('#impText').value.trim()) || '';
+  if (!raw){ toast('请先粘贴至少一条链接', 'err'); return; }
+
+  const btn = $('#impCheck'), lab = $('#impCheckTxt');
+  if (btn) btn.disabled = true;
+  if (lab) lab.innerHTML = '<span class="loading"></span> 检测中…';
+  if ($('#impSum')) $('#impSum').textContent = '';
+  $('#impList').innerHTML =
+    '<div class="implist" style="color:var(--fg3);font-size:12px">'
+    + '正在逐条检测（每条都要访问一次目标站点，可能需要几十秒）…</div>';
+
+  try{
+    const j = await api('/api/import/check?urls=' + encodeURIComponent(raw));
+    IMP_ITEMS = j.items || [];
+    renderImports(j);
+  }catch(e){
+    $('#impList').innerHTML =
+      `<div class="impitem bad"><div class="impstate bad">检测失败</div>
+       <div class="impmsg">${escText(e.message)}</div></div>`;
+  }finally{
+    if (btn) btn.disabled = false;
+    if (lab) lab.textContent = '检测连通性';
+  }
+}
+
+function renderImports(j){
+  const items = j.items || [];
+  if (!items.length){
+    $('#impList').innerHTML =
+      '<div class="impitem bad"><div class="impstate bad">没有识别到链接</div>'
+      + '<div class="impmsg">请粘贴以 http:// 或 https:// 开头的地址</div></div>';
+    return;
+  }
+
+  $('#impSum').innerHTML =
+    `<span style="color:#3fb950">可播放 ${j.playable||0}</span> · `
+    + `<span style="color:#d29922">仅可达 ${j.reachable||0}</span> · `
+    + `<span style="color:#ff6b70">失败 ${j.failed||0}</span>`;
+
+  $('#impList').innerHTML = items.map((it, i) => {
+    const playable = it.status === 'has_stream';
+    const reachable = it.status === 'reachable';
+    const cls = playable ? 'ok' : (reachable ? 'warn' : 'bad');
+    const label = playable ? '✓ 可播放' : (reachable ? '△ 能打开但没有播放源' : '✕ 连接失败');
+    // 只有"可播放"的条目才给观看/下载按钮 —— 失败条目不给无效入口
+    const acts = playable ? `
+      <div class="impacts">
+        <button class="btn sm" data-imp-play="${i}">▶ 在线观看</button>
+        <button class="btn sm" data-imp-dl="${i}">⬇ 下载</button>
+      </div>` : '';
+    return `
+      <div class="impitem ${cls}">
+        <div class="impurl">${escText(it.url)}</div>
+        <div class="impstate ${cls}">${label}
+          ${it.ms ? `<span style="color:var(--fg3);font-weight:400"> · ${it.ms}ms</span>` : ''}
+        </div>
+        ${it.title ? `<div class="impmsg">标题：${escText(it.title)}</div>` : ''}
+        ${it.stream && it.stream !== it.url
+          ? `<div class="impmsg">播放源：${escText(it.stream.slice(0, 110))}</div>` : ''}
+        ${it.error ? `<div class="impmsg" style="color:#ff9a9e">${escText(it.error)}</div>` : ''}
+        ${acts}
+      </div>`;
+  }).join('');
+
+  // 观看分支
+  $('#impList').querySelectorAll('[data-imp-play]').forEach(b => {
+    b.onclick = () => {
+      const it = IMP_ITEMS[parseInt(b.dataset.impPlay, 10)];
+      if (!it) return;
+      playExternal(it);
+    };
+  });
+  // 下载分支
+  $('#impList').querySelectorAll('[data-imp-dl]').forEach(b => {
+    b.onclick = () => {
+      const it = IMP_ITEMS[parseInt(b.dataset.impDl, 10)];
+      if (!it) return;
+      downloadExternal(it);
+    };
+  });
+}
+
+/* 观看:外部条目直接开独立播放页(播放页会自己让后端解析 m3u8) */
+function playExternal(it){
+  const p = new URLSearchParams();
+  // 传页面地址(而不是已解析的 m3u8),让播放页/后端用自己的 Referer 逻辑
+  p.set('u', b64e(it.url));
+  p.set('r', b64e(it.url));
+  p.set('t', (it.title || it.host || '外部视频').slice(0, 40));
+  if (it.title) p.set('n', b64e(it.title));
+  const u = '/player?' + p.toString();
+  if (isDesktopApp() && window.pywebview.api.open_player){
+    window.pywebview.api.open_player(u).then(ok => {
+      if (!ok) window.open(u, '_blank', 'noopener');
+    }).catch(() => window.open(u, '_blank', 'noopener'));
+  } else {
+    const w = window.open(u, '_blank', 'noopener');
+    if (!w) toast('浏览器拦截了新窗口，请允许弹出窗口', 'err');
+  }
+}
+
+/* 下载:外部条目以完整 URL 提交,后端 resolve_stream 会自动挖出 m3u8 */
+async function downloadExternal(it){
+  const out = ($('#outdir') && $('#outdir').value.trim()) || ENV.default_out;
+  const threads = parseInt(($('#threads') && $('#threads').value) || 16, 10);
+  try{
+    await api('/api/download', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        url: it.url,
+        external: true,                     // 告诉后端这是外部链接
+        out_dir: out,
+        quality: QUAL || 'best',
+        threads,
+        slug: (it.host || 'external').replace(/[^\w.-]/g, '_').slice(0, 40),
+        title: it.title || it.url,
+        no_direct: !!($('#noDirect') && $('#noDirect').checked),
+      })
+    });
+    toast('已加入下载队列', 'ok');
+    refreshTasks();
+    if (isMobile()) openPanel();
+  }catch(e){
+    toast('下载启动失败: ' + e.message, 'err');
+  }
+}
+
+/* ---------------- 手机访问 ---------------- */
+async function openPhone(){
+  $('#phoneModal').classList.add('open');
+  const body = $('#phBody');
+  body.innerHTML = '<div style="text-align:center;padding:20px"><span class="loading"></span> 读取地址…</div>';
+  try{
+    const j = await api('/api/lan');
+    renderPhone(j);
+  }catch(e){
+    body.innerHTML = `<div class="mmeta" style="color:#ff6b70">读取失败：${escText(e.message)}</div>`;
+  }
+}
+
+function renderPhone(j){
+  const urls = j.urls || [];
+  const body = $('#phBody');
+  if (!j.enabled || !urls.length){
+    body.innerHTML = `
+      <div class="phnote">
+        <b style="color:#ffbe3d">局域网访问未开启</b><br>
+        当前服务只监听本机(127.0.0.1)，手机连不上。<br>
+        请用 <b>--lan</b> 参数启动，或直接双击打包好的 exe（默认已开启）。
+      </div>`;
+    return;
+  }
+  const main = urls[0];
+  // 防火墙没放行时,手机一定连不上 —— 必须先解决这个,否则用户会一直转圈
+  const fwWarn = (j.fw_rule === false) ? `
+    <div class="fwbox">
+      <b>⚠ 可能被 Windows 防火墙拦着</b><br>
+      首次启动时如果没点「允许访问」，手机就连不上。点下面按钮生成放行脚本，
+      然后<b>右键「以管理员身份运行」</b>一次即可。
+      <div style="margin-top:8px">
+        <button class="btn sm" id="phFix">生成放行脚本</button>
+      </div>
+    </div>` : '';
+
+  body.innerHTML = `
+    ${j.qr ? `<img class="phq" src="${escAttr(j.qr)}" alt="扫码访问">` : ''}
+    <div class="phurl" id="phUrl">${escText(main)}</div>
+    <div class="phnote" style="text-align:center;margin-top:-4px">
+      手机和电脑连同一个 WiFi，扫码或输入上面地址
+    </div>
+    ${fwWarn}
+    <div class="msect">装到手机主屏幕（像 App 一样用）</div>
+    <ol class="phsteps">
+      <li><b>Android / Chrome</b>：打开上面地址 → 右上菜单 →「添加到主屏幕」</li>
+      <li><b>iPhone / Safari</b>：打开 → 底部「分享」→「添加到主屏幕」</li>
+      <li>之后从桌面图标直接打开，全屏无地址栏</li>
+    </ol>
+    <div class="phnote" style="margin-top:6px">
+      说明：手机只是<b>操作界面</b>，搜索/解析/下载都在电脑上跑，
+      文件也保存在电脑里。电脑上的这个程序需要保持运行。
+    </div>`;
+  const u = $('#phUrl');
+  if (u) u.onclick = () => copyText(main);
+  const fx = $('#phFix');
+  if (fx) fx.onclick = async () => {
+    try{
+      const r = await api('/api/lan/fix');
+      toast('已生成放行脚本，请到文件管理器右键「以管理员身份运行」', 'ok');
+    }catch(e){ toast('生成失败: ' + e.message, 'err'); }
+  };
+}
+
+/* ---------------- 事件 ---------------- */
+$('#btnSearch').onclick = () => doSearch(1);
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(1); });
+$('#perPage').onchange = applyCols;
+$('#mClose').onclick = closeInfo;
+$('#infoModal').onclick = (e) => { if (e.target.id === 'infoModal') closeInfo(); };
+const pc = $('#panelClose');
+if (pc) pc.onclick = closePanel;
+$('#btnPhone').onclick = openPhone;
+$('#btnImport').onclick = openImport;
+$('#impClose').onclick = closeImport;
+$('#impModal').onclick = (e) => { if (e.target.id === 'impModal') closeImport(); };
+$('#impCheck').onclick = checkImports;
+$('#impClear').onclick = () => {
+  $('#impText').value = ''; IMP_ITEMS = [];
+  $('#impList').innerHTML = ''; $('#impSum').textContent = '';
+  $('#impText').focus();
+};
+$('#phClose').onclick = () => $('#phoneModal').classList.remove('open');
+$('#phoneModal').onclick = (e) => {
+  if (e.target.id === 'phoneModal') $('#phoneModal').classList.remove('open');
+};
+
+// 分区按钮
+document.querySelectorAll('#secTabs .sec').forEach(b => {
+  b.onclick = () => openSection(b.dataset.sec, 1);
+});
+
+$('#btnHistory').onclick = () => { HIST_OPEN ? closeHistory() : openHistory(); };
+$('#histClose').onclick = closeHistory;
+$('#histQ').addEventListener('input', () => {
+  clearTimeout(window._hqT);
+  window._hqT = setTimeout(loadHistory, 300);
+});
+$('#histFilter').onchange = loadHistory;
+$('#histScan').onclick = () => {
+  const cur = ($('#outdir') && $('#outdir').value.trim()) || ENV.default_out;
+  scanHistory(cur, false);
+};
+$('#histClearMissing').onclick = async () => {
+  await api('/api/history/clear?only_missing=1', {method:'POST'});
+  toast('已清理文件失效的记录', 'ok'); loadHistory();
+};
+$('#histClearAll').onclick = async () => {
+  if (!confirm('清空全部下载历史记录？（不会删除视频文件）')) return;
+  await api('/api/history/clear', {method:'POST'});
+  toast('历史已清空', 'ok'); loadHistory();
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape'){
+    if ($('#infoModal').classList.contains('open')) { closeInfo(); return; }
+    if ($('#playerModal') && $('#playerModal').classList.contains('open')) return;
+    if (IMP_OPEN) { closeImport(); return; }
+    if (HIST_OPEN) closeHistory();
+  }
+  // "/" 是「聚焦主搜索框」的快捷键，但只能在**焦点不在任何输入框**时生效。
+  // 之前只排除了 #q，导致在网址输入框（#impText）里输入 / 会被抢焦点，
+  // 连 "iav24.com/path" 这种路径都输不进去。
+  if (e.key === '/' && !isTypingTarget(e.target)) {
+    e.preventDefault(); $('#q').focus();
+  }
+  // 翻页快捷键:左右方向键。任何输入类元素里都不该触发。
+  if (isTypingTarget(e.target)) return;
+  if (e.key === 'ArrowLeft' && CUR_PAGE > 1) gotoPage(CUR_PAGE - 1);
+  if (e.key === 'ArrowRight' && CUR_PAGE < TOTAL_PAGES) gotoPage(CUR_PAGE + 1);
+});
+
+/* 焦点是否落在「需要正常输入字符」的元素里。
+   覆盖 input / textarea / select / contenteditable，
+   这些地方任何普通字符都必须能正常输入，不能被全局快捷键抢走。 */
+function isTypingTarget(el){
+  if (!el || el.nodeType !== 1) return false;
+  const tag = (el.tagName || '').toUpperCase();
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (el.isContentEditable) return true;
+  // 部分浏览器里 e.target 是内部节点，往上再看一层
+  const p = el.closest && el.closest('input, textarea, select, [contenteditable="true"]');
+  return !!p;
+}
+
+// pywebview 就绪后给「选择…」按钮打个标记,提示用户这是原生对话框
+window.addEventListener('pywebviewready', () => {
+  const b = $('#btnPick');
+  if (b) { b.title = '用系统对话框选择文件夹（原生）'; b.classList.add('native'); }
+});
+
+// 注册 service worker:让手机"添加到主屏幕"后能像 App 一样启动
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+loadEnv();
+// 通路检测放到首屏之后异步跑(它是纯展示信息,不能拖慢页面加载)
+setTimeout(checkConnectivity, 300);
+applyCols();
+loadFavSet();
+loadGenres();
+refreshTasks();
+timer = setInterval(refreshTasks, 1000);
+window.addEventListener('beforeunload', () => clearInterval(timer));
+</script>
+</body>
+</html>

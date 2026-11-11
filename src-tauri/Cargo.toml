@@ -1,0 +1,55 @@
+[package]
+name = "missav"
+version = "2.0.0"
+description = "MissAV 下载器 (Tauri 2)"
+authors = ["missav"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "missav_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync", "process", "net"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-native-roots", "stream", "json", "gzip", "brotli", "deflate", "socks",
+] }
+url = "2"
+md-5 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+aes = "0.8"
+cbc = "0.1"
+aes-gcm = "0.10"
+regex = "1"
+once_cell = "1"
+anyhow = "1"
+thiserror = "2"
+futures-util = "0.3"
+percent-encoding = "2"
+dirs = "5"
+walkdir = "2"
+chrono = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
