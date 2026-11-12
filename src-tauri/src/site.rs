@@ -62,31 +62,35 @@ pub struct Page {
 // ─────────────────────────── 正则 ───────────────────────────
 
 static ITEM_RE: Lazy<Regex> = Lazy::new(|| {
-    // 卡片：<a href="/cn/xxx" ...>...<img data-src="封面" ...>
-    // 注意：raw string 用 r##"..."## —— 正则里有 "#（排除 # 和 ?），
-    // 用 r#"..."# 会在 "# 处提前结束。
-    Regex::new(r##"(?s)<a[^>]+href="(?P<href>/cn/[^"#?]+)"[^>]*>(?P<inner>.{0,1200}?)</a>"##).unwrap()
+    // 卡片：<a href="https://missav.live/cn/xxx" ...> ... <img data-src="封面">
+    //
+    // 两个坑：
+    // 1) raw string 用 r##"..."##，正则里有 "#（排除 # 和 ?），
+    //    用 r#"..."# 会在 "# 处提前结束。
+    // 2) href 可能是**绝对 URL**（站点现在就是这么输出的），也可能是
+    //    相对路径。只匹配 /cn/ 会得到 0 条，实测踩过。
+    Regex::new(r##"(?s)<a[^>]+href="(?:https?://[^"]*)?/(?:[a-z]{2}/)?(?P<href>[a-z0-9\-]{3,60})"[^>]*>(?P<inner>.{0,1500}?)</a>"##).unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static IMG_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?:data-src|src)="([^"]+)""#).unwrap());
 static DUR_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(\d{1,2}:\d{2}:\d{2})").unwrap()
+    Regex::new(r"(\d{1,2}:\d{2}:\d{2})").unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static TITLE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"<title[^>]*>(.*?)</title>"#).unwrap());
 static H1_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?s)<h1[^>]*>(.*?)</h1>"#).unwrap());
 static OG_DESC_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"<meta[^>]+property="og:description"[^>]+content="([^"]*)""#).unwrap()
+    Regex::new(r#"<meta[^>]+property="og:description"[^>]+content="([^"]*)""#).unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static OG_COVER_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"<meta[^>]+property="og:image"[^>]+content="([^"]*)""#).unwrap()
+    Regex::new(r#"<meta[^>]+property="og:image"[^>]+content="([^"]*)""#).unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static ACTRESS_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"href="/cn/actresses/[^"]*"[^>]*>([^<]{1,40})<"#).unwrap()
+    Regex::new(r#"href="/cn/actresses/[^"]*"[^>]*>([^<]{1,40})<"#).unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static GENRE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"href="/cn/genres/([^"/]+)""#).unwrap()
+    Regex::new(r#"href="/cn/genres/([^"/]+)""#).unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static REL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(\d{4}-\d{2}-\d{2})").unwrap());
@@ -95,13 +99,18 @@ static PAGES_RE: Lazy<Regex> =
 
 // 播放源候选（分级用）
 static TIER0_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?:source\d*|src|videoUrl|playUrl|file)\s*=\s*['"]([^'"]+\.m3u8[^'"]*)['"]"#).unwrap()
+    // 解包后的实际形态（实测）：
+    //   source=\'https://surrit.com/<uuid>/playlist.m3u8\';
+    //   source842=\'https://surrit.com/<uuid>/720p/video.m3u8\';
+    // 要点：引号是**转义过的** \'，只写 ['"] 一个都匹配不到。
+    Regex::new(r#"(?:[A-Za-z_$][\w$]{0,23})?\s*=\s*\\?['"]([^'"\\]+\.m3u8[^'"\\]*)\\?['"]"#)
+        .unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static ANY_M3U8_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"https?://[^\s'"<>\\]+\.m3u8[^\s'"<>\\]*"#).unwrap()
+    Regex::new(r#"https?://[^\s'"<>\\]+\.m3u8[^\s'"<>\\]*"#).unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 static UUID_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})").unwrap()
+    Regex::new(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})").unwrap_or_else(|_| Regex::new(r"$^").unwrap())
 });
 
 // ─────────────────────────── 工具 ───────────────────────────
@@ -167,17 +176,27 @@ pub fn parse_items(html: &str, base: &str) -> Vec<Item> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for cap in ITEM_RE.captures_iter(html) {
-        let href = cap.name("href").map(|m| m.as_str()).unwrap_or("");
+        // 捕获组已是纯 slug（如 "dldss-583"），host 与语言前缀已在正则里吃掉
+        let slug = cap.name("href").map(|m| m.as_str()).unwrap_or("").to_string();
         let inner = cap.name("inner").map(|m| m.as_str()).unwrap_or("");
         // 排除导航类链接
-        let slug = href.trim_start_matches("/cn/").trim_end_matches('/').to_string();
         if slug.is_empty()
+            || matches!(slug.as_str(), "cn" | "en" | "ja" | "ko" | "de" | "fr"
+                                    | "vi" | "th" | "ms" | "id" | "pt" | "fil")
             || slug.starts_with("search")
             || slug.starts_with("genres")
             || slug.starts_with("actresses")
             || slug.starts_with("pages")
+            || slug.starts_with("dm")
             || slug.contains('/')
         {
+            continue;
+        }
+        // 番号形如 xxx-123 / fc2-ppv-1234567：必须含连字符和数字
+        let looks_like_id = slug.contains('-')
+            && slug.chars().any(|c| c.is_ascii_digit())
+            && slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+        if !looks_like_id {
             continue;
         }
         if !seen.insert(slug.clone()) {
@@ -207,7 +226,8 @@ pub fn parse_items(html: &str, base: &str) -> Vec<Item> {
         let unc_link = html.contains(&format!("{slug}-uncensored-leak"));
         out.push(Item {
             id: id.clone(),
-            url: format!("{base}{href}"),
+            // slug 是纯番号，自己拼出完整地址
+            url: format!("{base}/cn/{slug}"),
             title: clean_title(&title),
             cover,
             duration,
@@ -235,17 +255,25 @@ pub fn total_pages(html: &str) -> usize {
 /// 站点把 m3u8 地址压在这个壳里，不解包就找不到真播放源。
 pub fn unpack_packer(html: &str) -> String {
     static PACK_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"eval\(function\(p,a,c,k,e,[dr]\)\{.*?\}\('([^']*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)")
+        Regex::new(r"(?s)eval\(function\(p,a,c,k,e,[dr]\)\{.*?\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)")
             .unwrap()
     });
     let mut result = html.to_string();
-    if let Some(c) = PACK_RE.captures(html) {
+    // 必须带 (?s)：压缩代码里有换行，`.` 默认不匹配换行，
+    // 不加会静默返回原文（长度不变），表现为「解包器跑了但没效果」。
+    // 可能有多段 packer，全部解出来拼回去。
+    for c in PACK_RE.captures_iter(html) {
         let p = &c[1];
         let a: u32 = c[2].parse().unwrap_or(62);
         let k: Vec<&str> = c[4].split('|').collect();
+        if k.is_empty() {
+            continue;
+        }
         let unpacked = base_n_decode(p, a, &k);
-        result.push('\n');
-        result.push_str(&unpacked);
+        if unpacked != p {
+            result.push('\n');
+            result.push_str(&unpacked);
+        }
     }
     result
 }
@@ -378,7 +406,7 @@ pub async fn fetch_detail(f: &Fetcher, id_or_url: &str, referer: Option<&str>) -
         .map(|c| unescape_html(&c[1]))
         .or_else(|| {
             static DESC_RE: Lazy<Regex> = Lazy::new(|| {
-                Regex::new(r#"<meta[^>]+name="description"[^>]+content="([^"]*)""#).unwrap()
+                Regex::new(r#"<meta[^>]+name="description"[^>]+content="([^"]*)""#).unwrap_or_else(|_| Regex::new(r"$^").unwrap())
             });
             DESC_RE.captures(&html).map(|c| unescape_html(&c[1]))
         })
@@ -606,22 +634,41 @@ impl SiteClient {
         Ok(Page { items, page, pages: total_pages(&html) })
     }
 
-    /// 标签总表
+    /// 标签总表。
+    ///
+    /// 站点结构（实测）：每个标签是一个 `<a>`，href 为绝对 URL
+    /// `https://missav.live/cn/genres/<名称>`，名称在 `</a>` 前几行，
+    /// 页面上不显示数量。
+    ///
+    /// 注意：不能用 `(?!...)</a>` 这类前向否定断言 —— Rust 的 regex crate
+    /// **不支持 look-around**，`Lazy::new` 里 unwrap 会在首次调用时 panic，
+    /// 直接把 tokio worker 打死（表现为「点标签页 App 就崩」）。
     pub async fn genres(&self) -> Result<Vec<Genre>> {
         let html = self.fetch_html(&format!("{}/cn/genres", self.base),
                                    SITE_REFERER).await?;
-        static PAIR_RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r#"/genres/([^"'<>]+)"[^>]*>\s*([^<]{1,40}?)\s*<(?:(?!</?a>)[\s\S]{0,400}?)(\d+)\s*条影片"#).unwrap()
+        static BLOCK_RE: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r##"(?s)<a\s[^>]*href="[^"]*/genres/([^"#?]+)"[^>]*>(.{0,600}?)</a>"##)
+                .unwrap_or_else(|_| Regex::new(r"$^").unwrap())
         });
-        let mut out = Vec::new();
-        for c in PAIR_RE.captures_iter(&html) {
-            let slug = percent_encoding::percent_decode_str(&c[1])
+        static COUNT_RE: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"(\d[\d,]*)\s*(?:条|個|items?)")
+                .unwrap_or_else(|_| Regex::new(r"$^").unwrap())
+        });
+
+        let mut out: Vec<Genre> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for c in BLOCK_RE.captures_iter(&html) {
+            let slug = percent_encoding::percent_decode_str(c[1].trim())
                 .decode_utf8_lossy().to_string();
             let name = strip_tags(&c[2]);
-            let count: u64 = c[3].parse().unwrap_or(0);
-            if !name.is_empty() {
-                out.push(Genre { tag: name, slug, count });
+            let name = if name.is_empty() { slug.clone() } else { name };
+            if name.is_empty() || !seen.insert(name.clone()) {
+                continue;
             }
+            let count: u64 = COUNT_RE.captures(&c[2])
+                .and_then(|x| x[1].replace(',', "").parse().ok())
+                .unwrap_or(0);
+            out.push(Genre { tag: name, slug, count });
         }
         Ok(out)
     }

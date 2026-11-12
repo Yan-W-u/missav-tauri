@@ -333,13 +333,18 @@ async fn do_download(
     }
 
     // 2) 选清晰度、拿分片列表
+    //
+    // Referer 必须用**站点页地址**，不能用 m3u8 自身地址。
+    // 实测：surrit CDN 对 m3u8 和分片都校验 Referer，
+    // 不带站点页 URL 一律 403（无 Referer 403，带站点页 200）。
+    let page_referer = url.to_string();
     let variants = hls::parse_master(&text, &m3u8);
     let (media_url, media_text) = if variants.is_empty() {
         (m3u8.clone(), text.clone())
     } else {
         let v = hls::pick_variant(&variants, quality)
             .ok_or_else(|| anyhow!("没有可用清晰度"))?;
-        let t = page_f.get_text(&v.url, Some(&m3u8)).await?;
+        let t = page_f.get_text(&v.url, Some(&page_referer)).await?;
         (v.url.clone(), t)
     };
     let media = hls::parse_media(&media_text, &media_url);
@@ -364,14 +369,34 @@ async fn do_download(
     let stem = if stem.trim().is_empty() { task_id.to_string() } else { stem };
     std::fs::create_dir_all(out_dir).ok();
 
-    // 4) 分片目录（md5 命名，支持断点续传）
-    let key = format!("{m3u8}|{media_url}");
-    let parts = out_dir.join(format!(".{stem}.parts-{}", short_hash(&key)));
+    // 4) 分片目录 —— 断点续传靠它，所以名字必须**跨次稳定**。
+    //
+    // 踩过的坑：原来用 `{m3u8}|{media_url}` 做哈希。但站点的播放源 URL
+    // 里带一个一次性的 UUID（每次访问详情页都会变），于是同一个视频
+    // 每次任务都会算出不同的目录名 —— 表现就是「下了 1998 片，
+    // 重跑又从 0 开始」，断点续传和失败补片全部失效。
+    //
+    // 改用「番号 + 清晰度」作为稳定键：同一个视频、同一档清晰度，
+    // 无论播放源怎么变，缓存目录都是同一个。
+    let stable_key = {
+        let g = st.tasks.lock().unwrap();
+        let t = g.get(task_id);
+        let slug = t.map(|x| x.slug.clone()).unwrap_or_default();
+        let title = t.map(|x| x.title.clone()).unwrap_or_default();
+        let q = t.map(|x| x.quality.clone()).unwrap_or_default();
+        let ident = if !slug.is_empty() { slug } else if !title.is_empty() {
+            title
+        } else {
+            url.to_string()
+        };
+        format!("{ident}|{q}")
+    };
+    let parts = out_dir.join(format!(".{stem}.parts-{}", short_hash(&stable_key)));
     std::fs::create_dir_all(&parts).ok();
 
     // 5) 下载
     let seg_fetcher = Fetcher::new(None, 45, 3)?;   // 分片直连，省代理流量
-    let keystore = Arc::new(KeyStore::new(seg_fetcher.clone(), m3u8.clone()));
+    let keystore = Arc::new(KeyStore::new(seg_fetcher.clone(), page_referer.clone()));
 
     let st_p = st.clone();
     let tid_p = task_id.to_string();
@@ -388,7 +413,8 @@ async fn do_download(
     });
 
     hls::download_segments(
-        seg_fetcher, &media.segments, keystore.clone(), &m3u8,
+        // 分片的 Referer 同样必须是站点页，否则 CDN 返 403
+        seg_fetcher, &media.segments, keystore.clone(), &page_referer,
         &parts, threads, None, Some(cb),
     ).await?;
 

@@ -124,6 +124,68 @@ impl Fetcher {
         Ok(decode_body(&bytes))
     }
 
+    /// 用系统 curl 兜一次。
+    ///
+    /// 为什么需要：目标站点在 Cloudflare 后面，reqwest 请求会拿到
+    /// 403 + "Just a moment..."（JS 挑战页）。同一台机器上系统的 curl
+    /// 却能稳定拿到 200（实测连续 3 次、155662 字节、约 0.9 秒，且不依赖 cookie）。
+    /// 差异在 TLS ClientHello 的细节，纯 reqwest 无法复现，也无法执行挑战页的 JS。
+    ///
+    /// 所以做两层：优先 reqwest（快、可流式、能读分片），
+    /// 遇到 403 才退到 curl 子进程取一次完整正文。
+    /// 取不到就返回 None，让调用方走原有报错路径。
+    async fn try_curl(&self, url: &str, referer: Option<&str>) -> Option<Vec<u8>> {
+        let curl = find_curl()?;
+
+        // 用临时文件接正文，避免大页面把管道塞满
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+        let tmp = std::env::temp_dir()
+            .join(format!("missav_curl_{}_{}.tmp", std::process::id(), stamp));
+
+        let mut cmd = tokio::process::Command::new(&curl);
+        cmd.arg("-sS").arg("-L")
+            .arg("--max-time").arg(self.timeout.as_secs().max(20).to_string())
+            .arg("-o").arg(&tmp)
+            .arg("-w").arg("%{http_code}")
+            .arg("-H").arg(format!("User-Agent: {UA_DEFAULT}"))
+            .arg("-H").arg("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .arg("-H").arg("Accept-Language: zh-CN,zh;q=0.9,en;q=0.8");
+        if let Some(r) = referer {
+            cmd.arg("-H").arg(format!("Referer: {r}"));
+        }
+        if let Some(p) = self.proxy.as_ref().filter(|s| !s.trim().is_empty()) {
+            let px = if p.starts_with("http://") || p.starts_with("socks5") {
+                p.clone()
+            } else {
+                format!("http://{p}")
+            };
+            cmd.arg("-x").arg(px);
+        }
+        if self.insecure {
+            cmd.arg("-k");
+        }
+        cmd.arg(url);
+
+        let out = match tokio::time::timeout(
+            Duration::from_secs(self.timeout.as_secs() + 15), cmd.output()).await
+        {
+            Ok(Ok(o)) => o,
+            _ => { let _ = std::fs::remove_file(&tmp); return None; }
+        };
+
+        let code: u16 = String::from_utf8_lossy(&out.stdout)
+            .trim().parse().unwrap_or(0);
+        let body = tokio::fs::read(&tmp).await.unwrap_or_default();
+        let _ = std::fs::remove_file(&tmp);
+
+        if (200..400).contains(&code) && !body.is_empty() {
+            Some(body)
+        } else {
+            None
+        }
+    }
+
     /// 取字节，带重试。超时随重试递增。
     pub async fn get_bytes(&self, url: &str, referer: Option<&str>,
                            idle_timeout_secs: u64) -> Result<Vec<u8>> {
@@ -140,8 +202,17 @@ impl Fetcher {
                             Err(e) => last_err = Some(e),
                         }
                     } else if code.as_u16() == 403 {
+                        // 403 有两种情况：
+                        //   1) 真的防盗链 / 无权限
+                        //   2) Cloudflare 的 "Just a moment..." JS 挑战
+                        // 后者 reqwest 过不了（不能执行 JS，TLS 指纹也不同），
+                        // 但系统 curl 能过，所以退到 curl 后备通道再试一次。
+                        if let Some(body) = self.try_curl(url, referer).await {
+                            return Ok(body);
+                        }
                         return Err(anyhow!(
-                            "HTTP 403（防盗链或 Cloudflare 拦截；检查 Referer 是否正确）"));
+                            "HTTP 403（站点要求浏览器验证。可在浏览器打开一次该站点，\
+                             或确认代理节点是否被站点封禁）"));
                     } else if code.as_u16() == 404 {
                         return Err(anyhow!("HTTP 404（地址不存在或已过期）"));
                     } else if matches!(code.as_u16(), 502 | 503 | 504) {
@@ -207,6 +278,34 @@ impl Fetcher {
     }
 
     pub fn client(&self) -> &reqwest::Client { &self.client }
+}
+
+/// 找系统里的 curl（Cloudflare 挑战的后备通道用）。
+/// Windows 10 1803+ 自带，路径固定；Android 一般没有。
+pub fn find_curl() -> Option<std::path::PathBuf> {
+    let name = if cfg!(windows) { "curl.exe" } else { "curl" };
+    #[cfg(windows)]
+    {
+        let sys = std::path::PathBuf::from(r"C:\Windows\System32").join(name);
+        if sys.is_file() {
+            return Some(sys);
+        }
+    }
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let p = dir.join(name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    for p in ["/usr/bin/curl", "/usr/local/bin/curl"] {
+        let pb = std::path::PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    None
 }
 
 /// 把 reqwest 的错误翻成人能看懂的中文
@@ -371,6 +470,10 @@ pub async fn detect_proxy() -> Option<String> {
         for port in PROXY_PORTS {
             candidates.push(format!("http://{host}:{port}"));
         }
+        // 用户手动做端口转发时常用的端口
+        for port in [18080u16, 18081, 28080] {
+            candidates.push(format!("http://{host}:{port}"));
+        }
     }
 
     let mut found: Option<String> = None;
@@ -476,16 +579,14 @@ fn read_system_proxy() -> Option<String> {
 
 /// 读 Android 的全局 HTTP 代理设置。
 ///
-/// 实现方式：直接调 `getprop` 拿不到（那是系统属性），
-/// 系统代理在 settings 数据库里，普通 App 没有读 settings 的权限。
-/// 但 **App 自己能通过 Java 层 Settings.Global.getString 读到**，
-/// 只是这里在 Rust 侧，跨 JNI 比较重。
+/// 实现方式：系统代理存在 `Settings.Global.http_proxy`，普通 App 没有
+/// 直接读 settings 的权限，但通过 Java 层可以读到。这里走 JNI。
 ///
-/// 折中方案：读环境变量 + 探测宿主机常见端口。
-/// 在模拟器里 10.0.2.2 就是宿主机，所以把宿主机端口也纳入候选。
+/// 为什么值得这么麻烦：用户配了代理 App 却探测不到，表现就是
+/// 「明明代理开着，App 说站点不可达」，排查成本极高。
 #[cfg(target_os = "android")]
 fn android_http_proxy() -> Option<String> {
-    // 有些 ROM 会把代理写进环境变量
+    // 1) 环境变量（部分 ROM 会写）
     for k in ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"] {
         if let Ok(v) = std::env::var(k) {
             let t = v.trim();
@@ -498,7 +599,51 @@ fn android_http_proxy() -> Option<String> {
             }
         }
     }
-    None
+    // 2) JNI 读 Settings.Global.http_proxy
+    jni_read_android_proxy()
+}
+
+/// 通过 JNI 读 Android 系统代理设置。
+#[cfg(target_os = "android")]
+fn jni_read_android_proxy() -> Option<String> {
+    use jni::objects::{JObject, JString, JValue};
+
+    let vm_ptr = unsafe { ndk_context::android_context().vm() };
+    if vm_ptr.is_null() {
+        return None;
+    }
+    let vm = unsafe { jni::JavaVM::from_raw(vm_ptr as *mut jni::sys::JavaVM) }.ok()?;
+    let mut env = vm.attach_current_thread().ok()?;
+
+    // ActivityThread.currentActivityThread().getApplication()
+    let at = env.find_class("android/app/ActivityThread").ok()?;
+    let cur = env.call_static_method(&at, "currentActivityThread",
+        "()Landroid/app/ActivityThread;", &[]).ok()?.l().ok()?;
+    let app = env.call_method(&cur, "getApplication",
+        "()Landroid/app/Application;", &[]).ok()?.l().ok()?;
+    if app.is_null() {
+        return None;
+    }
+
+    let sg = env.find_class("android/provider/Settings$Global").ok()?;
+    let resolver = env.call_method(&app, "getContentResolver",
+        "()Landroid/content/ContentResolver;", &[]).ok()?.l().ok()?;
+    let key = env.new_string("http_proxy").ok()?;
+    let key_obj = JObject::from(key);
+    let val = env.call_static_method(&sg, "getString",
+        "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;",
+        &[JValue::Object(&resolver), JValue::Object(&key_obj)])
+        .ok()?.l().ok()?;
+    if val.is_null() {
+        return None;
+    }
+    let s: String = env.get_string(&JString::from(val)).ok()?.into();
+    let s = s.trim();
+    // 系统里可能存成 ":0" 表示清空
+    if s.is_empty() || s == ":0" {
+        return None;
+    }
+    Some(if s.starts_with("http://") { s.to_string() } else { format!("http://{s}") })
 }
 
 #[cfg(all(not(windows), not(target_os = "android")))]

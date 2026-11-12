@@ -386,7 +386,20 @@ pub async fn download_segments(
 
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            let res = fetch_one_segment(&f, &seg, &ks, &ref_s).await;
+            // 分片级重试。
+            //
+            // 实测：2001 个分片里偶尔有 3 个会返 403（CDN 侧的瞬时限流），
+            // 只请求一次就判定整个任务失败，结果是「跑了 15 分钟、
+            // 下到 99.9%、差最后 3 片全废」。这里补 3 次，间隔递增。
+            let mut res = fetch_one_segment(&f, &seg, &ks, &ref_s).await;
+            for attempt in 1..=3u32 {
+                if res.is_ok() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    800 * attempt as u64)).await;
+                res = fetch_one_segment(&f, &seg, &ks, &ref_s).await;
+            }
             match res {
                 Ok(data) => {
                     let mut fh = tokio::fs::File::create(&path).await?;
@@ -410,29 +423,72 @@ pub async fn download_segments(
                     }
                     Ok::<(), anyhow::Error>(())
                 }
-                Err(e) => Err(anyhow!("分片 {} 失败: {}", seg.index, e)),
+                // 分片失败不在这里中止：把失败的分片坐标传回去，
+                // 全部跑完后再统一补一次。这样 1998/2001 的局面下，
+                // 只需重试那 3 片，而不是整个任务作废。
+                Err(e) => Err(anyhow!("{}|{}", seg.index, e)),
             }
         }));
     }
 
-    let mut first_err: Option<anyhow::Error> = None;
+    // 收集失败分片
+    let mut failed: Vec<(String, String)> = Vec::new();   // (index, 错误)
     for h in handles {
         match h.await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
-                if first_err.is_none() {
-                    first_err = Some(e);
+                let msg = e.to_string();
+                match msg.split_once('|') {
+                    Some((idx, rest)) => failed.push((idx.to_string(), rest.to_string())),
+                    None => failed.push(("?".into(), msg)),
                 }
             }
-            Err(e) => {
-                if first_err.is_none() {
-                    first_err = Some(anyhow!("任务异常: {e}"));
-                }
-            }
+            Err(e) => failed.push(("?".into(), format!("任务异常: {e}"))),
         }
     }
-    if let Some(e) = first_err {
-        return Err(e);
+
+    // 对失败的分片做第二轮补充重试（串行、间隔更长）。
+    // CDN 的 403 多数是瞬时限流，隔一会儿再来通常就过了。
+    if !failed.is_empty() {
+        let mut still: Vec<(String, String)> = Vec::new();
+        for (idx_s, err) in failed {
+            let idx: usize = idx_s.parse().unwrap_or(usize::MAX);
+            // 从原始 list 里找回分片（seg_map 里的是引用，且已被移动进闭包）
+            let seg = match list.iter().find(|s| s.index == idx) {
+                Some(s) => (*s).clone(),
+                None => { still.push((idx_s, err)); continue; }
+            };
+            let path = dst.join(format!("seg_{:05}.ts", seg.index));
+            let mut ok = false;
+            let mut last = err;
+            for round in 1..=4u32 {
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    1500 * round as u64)).await;
+                match fetch_one_segment(&seg_fetcher, &seg, &keystore, referer).await {
+                    Ok(data) => {
+                        if let Ok(mut fh) = tokio::fs::File::create(&path).await {
+                            if fh.write_all(&data).await.is_ok() {
+                                let _ = fh.flush().await;
+                                ok = true;
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => last = e.to_string(),
+                }
+            }
+            if !ok {
+                still.push((idx_s, last));
+            }
+        }
+        if !still.is_empty() {
+            let names: Vec<String> = still.iter().take(5)
+                .map(|(i, _)| i.clone()).collect();
+            return Err(anyhow!(
+                "{} 个分片重试后仍失败（索引 {}）。已下载的分片保留在缓存目录，\
+                 重新发起同一任务会接着下，不必从头开始。原因：{}",
+                still.len(), names.join(","), still[0].1));
+        }
     }
     Ok(total)
 }

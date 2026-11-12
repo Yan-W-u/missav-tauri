@@ -20,9 +20,6 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync", "process", "net"] }
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls-native-roots", "stream", "json", "gzip", "brotli", "deflate", "socks",
-] }
 url = "2"
 md-5 = "0.10"
 sha2 = "0.10"
@@ -39,6 +36,22 @@ percent-encoding = "2"
 dirs = "5"
 walkdir = "2"
 chrono = "0.4"
+
+# TLS 后端按平台分开：
+# 桌面用 native-tls（Windows 走 schannel，和系统 curl 同一条路径）；
+# Android 没有 openssl，用 rustls。
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = [
+  "native-tls", "stream", "json", "gzip", "brotli", "deflate", "socks",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-native-roots", "stream", "json", "gzip", "brotli", "deflate",
+] }
+# 读 Android 系统代理设置（Settings.Global.http_proxy）需要走 JNI
+jni = "0.21"
+ndk-context = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
