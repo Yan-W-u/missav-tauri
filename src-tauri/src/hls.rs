@@ -507,25 +507,53 @@ pub async fn remux_with_ffmpeg(ffmpeg: &str, ts: &Path, mp4: &Path) -> Result<()
     Ok(())
 }
 
-/// 找系统里的 ffmpeg
+/// 找系统里的 ffmpeg。
+///
+/// 查找顺序：
+///   1. 可执行文件同目录（方便用户把 ffmpeg 放进来一起分发）
+///   2. `FFMPEG` 环境变量指定的路径
+///   3. PATH
+///   4. 几个常见安装位置
 pub fn find_ffmpeg() -> Option<PathBuf> {
+    let exe_name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
     let mut cands: Vec<PathBuf> = Vec::new();
-    for p in [
-        r"D:\EVCapture\ffmpeg.exe",
-        r"D:\CR-2000\Bin64\ffmpeg.exe",
-        r"C:\ffmpeg\bin\ffmpeg.exe",
-    ] {
-        cands.push(PathBuf::from(p));
-    }
-    // PATH 里的第一个
-    if let Ok(paths) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let exe = dir.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
-            if exe.is_file() {
-                cands.push(exe);
-            }
+
+    // 1) 与主程序同目录
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            cands.push(dir.join(exe_name));
+            cands.push(dir.join("bin").join(exe_name));
         }
     }
+    // 2) 显式指定
+    if let Ok(p) = std::env::var("FFMPEG") {
+        if !p.trim().is_empty() {
+            cands.push(PathBuf::from(p.trim()));
+        }
+    }
+    // 3) PATH
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            cands.push(dir.join(exe_name));
+        }
+    }
+    // 4) 常见位置
+    #[cfg(windows)]
+    {
+        for p in [
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+            r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+        ] {
+            cands.push(PathBuf::from(p));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for p in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg"] {
+            cands.push(PathBuf::from(p));
+        }
+    }
+
     cands.into_iter().find(|p| p.is_file())
 }
 

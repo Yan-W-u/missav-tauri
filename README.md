@@ -1,235 +1,155 @@
 # MissAV 下载器 · Tauri 2 版
 
-用 Tauri 2 重写的版本。**原 Python 版（`D:\工作区\missav-dl`）原封未动**，两套可以并存。
+一个用 **Rust + Tauri 2** 写的视频下载与在线观看客户端，带 Windows 桌面版和 Android 版。
 
-## 先回答你的问题：手机电脑都能用吗？
+界面是原生的 HTML/CSS/JS，后端是 Rust，打包体积小、启动快、不需要装 Python 或 Node 运行时。
 
-**不是同一个包。** Tauri 2 一套代码可以出三个平台，但产物是分开的：
-
-| 平台 | 产物 | 能否现在给 | 说明 |
-| --- | --- | --- | --- |
-| Windows | `MissAV下载器.exe`（6.1 MB） | ✅ 已构建 | 双击即用 |
-| Android | `MissAV下载器-arm64.apk`（9 MB） | ✅ 已构建 | 传手机安装 |
-| iOS | `.ipa` | ❌ | **必须有 Mac + Xcode**，这台 Windows 做不到 |
-| macOS / Linux | `.dmg` / `.AppImage` | ❌ | 需要对应系统编译 |
-
-所以「手机电脑都能用」只在 **Windows + Android** 这个范围成立。iOS 无解（除非换 Mac）。
+> 仅用于个人学习和私有部署。请自行确认所在地法律与目标站点的服务条款。
 
 ---
 
-## 交付物
+## 它能干什么
 
-```
-D:\工作区\missav-tauri\dist\
-├── desktop\
-│   ├── MissAV下载器.exe     6.1 MB   ← 桌面版
-│   └── ui\                            ← 必须和 exe 放一起
-└── MissAV下载器-arm64.apk   9 MB     ← 安卓版（已签名）
-```
+- **搜索**：输入番号（`SSIS-001`）或关键词，卡式分页浏览
+- **分区浏览**：新作上市、最近更新、无码流出、中文字幕
+- **标签筛选**：单个标签浏览；支持多选（并集 / 交集两种语义）
+- **详情查看**：封面、时长、发行日期、演员、分类、简介，并自动标注**有码 / 无码**
+- **在线观看**：独立的播放页，主界面和播放互不阻塞，清晰度可切换
+- **下载**：HLS 分片并发下载 → 解密 → 拼接 → ffmpeg 无损转封装为 mp4
+- **断点续传**：分片缓存按播放源哈希命名，中断后重跑只补缺的片
+- **导入外部链接**：直接粘贴任意页面地址或 `.m3u8`，绕过站点本身使用
+- **历史 / 收藏**：任务进度、已完成记录（文件丢失会自动标记）、收藏列表
 
-体积对比：Python 版 exe 58 MB → Rust 版 6.1 MB（**缩到 1/10**）。
-内存：Python 版约 100 MB → Rust 版约 31 MB。
+---
 
-### 桌面版用法
+## 怎么用
 
-1. 把 `desktop\` 整个目录拷到目标机器（**exe 和 ui 必须在一起**）
-2. 双击 `MissAV下载器.exe`
+### Windows
 
-### 安卓版用法
+解压后双击 `MissAV下载器.exe`。同目录下必须有 `ui/` 文件夹。
 
-1. 把 APK 传到手机（微信/QQ/数据线都行）
-2. 手机上点开安装，需要允许「安装未知来源应用」
-3. 装好直接运行
+首次启动会在 `下载/MissAV` 建输出目录，可在界面里改。
+
+### Android
+
+安装 `*-arm64.apk`（arm64-v8a，覆盖绝大多数现代机型）。需要允许「安装未知来源应用」。
 
 自签证书，仅供自己安装；上架应用商店才需要正式签名。
 
----
+### 关于代理
 
-## 架构
+程序会自动探测本地代理（Windows 读系统代理设置，Android 读系统代理配置），也可以手动指定。
 
-```
-src-tauri/
-├── src/
-│   ├── main.rs    桌面入口（转发到 lib）
-│   ├── lib.rs     共享入口 + Tauri 命令（桌面/移动端共用）
-│   ├── fetch.rs   HTTP 抓取层（代理探测、重试、空闲超时流式下载）
-│   ├── hls.rs     HLS 解析/解密/下载/拼接/转封装
-│   ├── site.rs    站点解析（列表、详情、播放源分级、packer 解包）
-│   ├── api.rs     本地 HTTP 服务 + 静态资源 + 反向代理
-│   └── tasks.rs   任务队列、进度、历史、收藏
-└── gen/android/   Android 工程（tauri android init 生成）
-```
+数据链路是分层的，**站点页需要代理，CDN 通常直连更快**：
 
-### 为什么桌面端还开 HTTP 服务
-
-现有前端（`index.html` / `player.html`）是 `fetch('/api/...')` 写的。走 HTTP 就能**一行不改地复用**，
-同时手机能通过局域网访问同一套接口。
-
-移动端则走 Tauri `invoke` 命令（`cmd_search`、`cmd_download` 等），因为手机上没有"本地 HTTP 服务"的位置。
-
-### 从 Python 版继承的关键决策
-
-这些坑都是原版实测踩出来的，Rust 版逐条保留：
-
-| 问题 | 处理 |
+| 环节 | 是否走代理 |
 | --- | --- |
-| CDN 防盗链只认站点 Referer | 所有请求带 Referer + Origin |
-| 播放源被广告位抢占（无码变有码） | 三级分级：`source=` 赋值 > packer 解包 > 裸链接；`playlist.m3u8` 排最后 |
-| 站点用 Dean Edwards packer 压缩播放源 | 自己实现 base62 解包（标准库 `from_str_radix` 只到 36 进制，会 panic） |
-| 分片伪装 `.jpeg` 实为 TS | 按首字节 `0x47` 判断，不看扩展名 |
-| 固定总超时导致慢分片永远失败 | 空闲超时：只要还在来数据就等 |
-| 一次性提交全部 Future 撑爆内存 | 滑窗并发（窗口 = 线程数 × 2） |
-| 本地代理做 TLS 中间人 → UnknownIssuer | 启用 `rustls-tls-native-roots` + 自动降级不校验证书 |
-| 代理端口开着但实际不通 | 必须真发请求验证，且系统代理优先于端口扫描 |
+| 搜索结果 / 详情页 | 需要 |
+| 封面图 | 建议直连 |
+| 视频分片 | 默认直连 |
+| 播放（m3u8 与分片） | 经本地反向代理，补齐 Referer 后转发 |
 
 ---
 
-## 已知限制（如实说明）
+## 技术设计
 
-### 1. 站点被墙时需要能转发 missav 的代理
-
-实测你当前环境：
+### 架构
 
 ```
-百度              → 200   （代理正常）
-fourhoi.com CDN   → 200   （CDN 正常）
-missav.live 站点  → 超时   （被阻断）
+src-tauri/src/
+├── fetch.rs    抓取层：代理探测与降级、重试、空闲超时流式下载
+├── hls.rs      HLS：master/media 解析、AES-128 解密、并发下载、拼接、转封装
+├── site.rs     站点解析：列表/详情、播放源分级提取、JS packer 解包
+├── api.rs      本地 HTTP 服务 + m3u8 反向代理 + 静态资源
+├── tasks.rs    任务队列、进度上报、历史与收藏持久化
+├── lib.rs      桌面与移动端共用入口、IPC 命令
+└── main.rs     桌面可执行入口（转发到 lib）
 ```
 
-当前代理是 SteamTools（`26561`），它只加速 Steam，**不转发 missav**。
-这不是 Rust 版的问题——PowerShell 用同一代理访问 missav 也超时。
+**桌面端**起一个本地 HTTP 服务（绑定 `0.0.0.0`），窗口加载 `http://127.0.0.1:<port>`。
+好处是：手机在同一局域网扫码即可访问同一套界面，前端代码只有一份。
 
-要能搜索，需要一个**能访问 missav 的代理**（Clash、v2rayN 等），程序会自动探测。
+**Android 端**没有本地 HTTP 服务的位置，改为走 Tauri `invoke` 命令。前端有一层适配层，同一份 `index.html` 在两种环境下都能跑。
 
-### 2. 安卓版 — 已在模拟器实测
+### 几个踩过的坑
 
-测试环境：`hghub_test` AVD（Android 14，x86_64 + arm64 转译），APK 安装后 `primaryCpuAbi=arm64-v8a`。
+这些都是实测出来的，写在代码注释里：
 
-**跑通的（有截图证据）**：
+**播放源必须分级。** 页面里既有真播放源，也有广告位的 `playlist.m3u8`。只按出现顺序取第一个，会被广告位抢占，结果就是选了「无码」下载下来还是有码。所以按「显式赋值 > 解包结果 > 裸链接」三级排序，`playlist.m3u8` 一律靠后。
 
-| 项目 | 结果 |
-| --- | --- |
-| 安装 | Success，包名 `com.missav.downloader`，versionName 2.0.0 |
-| 启动 | 无崩溃，WebView 正常渲染，内存约 250 MB |
-| 界面 | 搜索框、分区、标签、导入按钮全部正常显示 |
-| IPC 通路 | 搜索返回 Rust 侧生成的错误文案；导入检测真实跑了 11.9 秒并回传结果 |
-| 裸域名补全 | 输入 `example.com` → 自动补 `https://example.com` |
-| 三级判定 | `可播放 0 · 仅可达 1 · 失败 0`，逐条给出原因 |
-| 连通性横幅 | `分片可直连` 变绿点（Rust 真的访问到了 fourhoi CDN） |
+**播放源被 JS 压缩。** 站点用 Dean Edwards packer（base62）压地址。Rust 标准库 `u32::from_str_radix` 最大只支持 36 进制，直接用会 panic，得自己实现 base62 解码。
 
-**实测中发现并修掉的 3 个问题**：
+**分片伪装扩展名。** 分片地址是 `.jpeg`，内容是 TS。不能靠扩展名判断类型，得看首字节 `0x47`。
 
-1. **安卓上探测不到代理** — `read_system_proxy()` 原来只读 Windows 注册表，非 Windows 分支只读环境变量。Android 的系统代理存在 `settings global http_proxy`，两边都读不到，导致所有请求走直连然后超时。已加 `android_http_proxy()` 分支 + 探测 `10.0.2.2`（模拟器里的宿主机地址）。
-2. **`/api/connectivity` 映射错误** — 之前偷懒映射到 `cmd_lan`（只返回 IP），前端拿不到 `site`/`cdn` 字段，状态栏永远显示不可达。已补 `cmd_connectivity` / `cmd_proxy_status` / `cmd_proxy_detect` 三个命令。
-3. **`/api/proxy/status` 和 `/api/proxy` 没映射** — 点代理状态会抛「该功能在手机上暂不支持」。已补。
+**固定总超时会把慢分片判死。** 有的分片在 CDN 上要 50 秒才下完（约 18 KB/s），用固定超时必然失败。改成**空闲超时**：只要还在来数据就一直等，停住 N 秒才放弃。
 
-**测试中踩到的环境坑（与 App 无关，但会影响你复现）**：
+**一次性提交全部分片 Future 会爆内存。** 2600 片 × 每片 460 KB 的 Future 结果能涨到 GB 级。改成滑窗并发（窗口 = 线程数 × 2）。
 
-- SteamTools 代理只监听 `127.0.0.1`，模拟器访问不到。要用 `adb reverse tcp:26531 tcp:26531` 把它映射进去，再把模拟器代理设成 `127.0.0.1:26531`。
-- 模拟器网络状态是 `partialConnectivity`（不是 VALIDATED），外网访问受限。`example.com` 能通，`missav.live` 不能——和宿主机表现一致。
+**CDN 防盗链只认站点页 Referer。** 浏览器不能给 `<video>` 或 hls.js 的请求设 Referer，所以只能由本地服务做反向代理，把 m3u8 里的所有地址重写成本地路径，由服务端补上 Referer 再转发。
 
-**仍未验证的**：真机安装、下载全流程（需要能连 missav 的代理）、在线播放（需要能取到 m3u8）。
+**本地代理做 TLS 中间人会导致证书链失败。** 报 `UnknownIssuer`。所以要优先用系统证书库，并在探测到这种情况时自动降级不校验证书。
 
-### 3. 安卓版当前只编了 arm64
-
-`arm64-v8a` 覆盖绝大多数现代手机。老的 32 位设备需要另编 `armv7`。
+**代理端口开着不等于能用。** 客户端会残留监听但实际不通。必须真发一次请求验证，且要多个探测目标（某些站点本身被封，单一目标会把好代理误判成坏）。
 
 ---
 
-## 构建方法（复现用）
+## 构建
 
-环境要求（本机已装好）：
-- Rust 1.99.1 + `aarch64-linux-android` target
-- VS 2022（`E:\c\c`）+ `vcvars64.bat`
-- JDK 21、Android SDK（`D:\android-sdk`）、NDK 27
+### 依赖
 
-### 桌面版
+- Rust 1.77+（含对应平台 target）
+- Windows 需要 MSVC 工具链；Android 需要 JDK 17+、Android SDK、NDK
+- 桌面打包用 `cargo tauri`（`cargo install tauri-cli --version "^2.0"`）
 
-```powershell
-cd D:\missav-tauri
-$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
-cmd /c "`"E:\c\c\VC\Auxiliary\Build\vcvars64.bat`" >nul 2>&1 && cargo tauri build --no-bundle"
-# 产物: src-tauri\target\release\missav.exe
+### 桌面
+
+```bash
+cargo tauri build --no-bundle
+# 产物: src-tauri/target/release/<name>.exe，需与 ui/ 放在一起
 ```
 
-### 安卓版
+### Android
 
-Windows 上构建 Android 会遇到三个坑，都已绕过：
-
-**坑 1：Gradle 下载超时**
-境外源慢，用腾讯镜像：
-```powershell
-Invoke-WebRequest "https://mirrors.cloud.tencent.com/gradle/gradle-9.6.1-bin.zip" -OutFile "$env:TEMP\g.zip"
-# 解压到 %USERPROFILE%\.gradle\wrapper\dists\gradle-9.6.1-bin\<hash>\
+```bash
+cargo tauri android init      # 首次，生成 gen/android 工程
+cargo tauri android build --target aarch64 --apk
 ```
 
-**坑 2：路径含中文**
-`D:\工作区` 被 Android Gradle 插件拒绝。解决：
-```powershell
-cmd /c "mklink /J D:\missav-tauri `"D:\工作区\missav-tauri`""
-Add-Content D:\missav-tauri\src-tauri\gen\android\gradle.properties "android.overridePathCheck=true"
+**Android 构建的三个常见坑：**
+
+**Gradle 下载慢。** 用国内镜像下载 `gradle-x.x-bin.zip`，解压到 `~/.gradle/wrapper/dists/<版本>/<hash>/`。
+
+**项目路径含中文**会被 Android Gradle 插件拒绝。两种解法：放到纯 ASCII 路径，或用 junction 映射过去并加 `android.overridePathCheck=true` 到 `gradle.properties`。
+
+**Windows 非开发者模式下没有符号链接权限**，而 Tauri 用 symlink 把 `.so` 放进 `jniLibs`，会失败。绕过方式：先编译 Rust 拿到 `.so`，手动复制到 `jniLibs/<abi>/`，再用 `-x rustBuild<Abi>Release` 跳过该任务直接打包。
+
+```bash
+# 手动放 .so 后
+cd src-tauri/gen/android
+./gradlew assembleArm64Release -x rustBuildArm64Release
 ```
 
-**坑 3：符号链接权限**
-Tauri 用 symlink 把 `.so` 放进 jniLibs，Windows 非开发者模式没权限。绕过方式：
-```powershell
-# 1) 先编译 Rust（这一步 Tauri 能做成功）
-cd D:\missav-tauri
-cargo tauri android build --target aarch64 --apk   # 会在 symlink 处失败，但 .so 已生成
-
-# 2) 手动放 .so
-$src = "src-tauri\target\aarch64-linux-android\release\libmissav_lib.so"
-$dst = "src-tauri\gen\android\app\src\main\jniLibs\arm64-v8a\libmissav_lib.so"
-Copy-Item $src $dst -Force
-
-# 3) 跳过 rust 构建直接打包
-cd src-tauri\gen\android
-.\gradlew.bat assembleArm64Release --no-daemon -x rustBuildArm64Release
-
-# 4) 签名（自己生成一份，密码自己定，不要提交 keystore）
-keytool -genkeypair -keystore missav.keystore -alias missav -keyalg RSA `
-  -keysize 2048 -validity 10000 -storepass <你的密码> -keypass <你的密码> `
-  -dname "CN=MissAV, OU=Dev, O=MissAV, L=CN, ST=CN, C=CN"
-D:\android-sdk\build-tools\34.0.0\apksigner.bat sign `
-  --ks missav.keystore --ks-pass pass:<你的密码> --key-pass pass:<你的密码> `
-  --out MissAV下载器-arm64.apk app\build\outputs\apk\arm64\release\app-arm64-release-unsigned.apk
-```
-
-> `.keystore` 是签名私钥，泄露等于别人能伪造你的 App 更新。本仓库的 `.gitignore` 已排除它。
+签名用自己生成的 keystore，密码自己保管，**不要提交到仓库**。
 
 ---
 
 ## 测试
 
-```powershell
-cd D:\missav-tauri\src-tauri
-cmd /c "`"E:\c\c\VC\Auxiliary\Build\vcvars64.bat`" >nul 2>&1 && cargo test --lib"
+```bash
+cd src-tauri
+cargo test --lib
 ```
 
-**28 个单元测试全部通过**，覆盖：
+28 个单元测试，覆盖：
 
-- HLS：master 排序、清晰度选择、相对/协议相对地址、加密与 IV 检测、音频流过滤
-- 站点：番号规范化、有码判定、标题清洗（不能吃掉番号）、packer 解包、base62 解析、播放源分级
+- HLS：master 排序、清晰度选择、相对/协议相对地址、加密与 IV 检测、纯音频流过滤
+- 站点：番号规范化、有码判定、标题清洗、packer 解包与 base62 解析、播放源分级
 - 任务：文件名清洗、长度限制、哈希稳定性
-- API：m3u8 地址改写（含 EXT-X-KEY）、URL 参数解析
-- 抓取：UTF-8/非法字节解码、代理 URL 规范化
-
-诊断测试（需真实代理）：
-```powershell
-cargo test --lib diag_ -- --ignored --nocapture
-```
+- API：m3u8 地址改写（含 `EXT-X-KEY`）、URL 查询解析
+- 抓取：UTF-8 与非法字节解码、代理 URL 规范化
 
 ---
 
-## 与原 Python 版的关系
+## 许可
 
-| | Python 版 | Tauri 2 版 |
-| --- | --- | --- |
-| 位置 | `D:\工作区\missav-dl` | `D:\工作区\missav-tauri` |
-| 状态 | **原封未动**，可继续用 | 新增，独立 |
-| 体积 | 58 MB | 6.1 MB |
-| 内存 | ~100 MB | ~31 MB |
-| 手机 | 浏览器扫码（PWA） | 原生 APK |
-| 成熟度 | 长期验证，功能齐全 | 后端逻辑等价，安卓前端待适配 |
-
-两套互不干扰，Python 版继续可用。
+代码以 MIT 发布。程序本身不包含、不分发任何视频内容，所有内容版权归原权利方所有。

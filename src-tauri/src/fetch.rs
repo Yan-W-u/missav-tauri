@@ -297,9 +297,12 @@ impl Limiter {
     }
 }
 
-/// 常见的本地代理端口，按优先级排列
+/// 常见的本地代理端口，按使用频率排列。
+///
+/// 覆盖主流客户端的默认端口：Clash / Clash Verge / v2rayN / Shadowsocks /
+/// sing-box / Surge / Qv2ray / V2rayU 等。
 pub const PROXY_PORTS: &[u16] = &[
-    7890, 7897, 7891, 10809, 10808, 2080, 8889, 1080, 8080, 12334, 26561,
+    7890, 7897, 7891, 1080, 10808, 10809, 2080, 8889, 8080, 8118, 9910, 20171,
 ];
 
 /// 探测到的代理是否需要忽略证书校验（TLS 中间人场景）
@@ -545,7 +548,12 @@ mod diag_tests {
     #[tokio::test]
     #[ignore]
     async fn diag_port_probe() {
-        for port in [26561u16, 12334, 7890] {
+        // 端口从环境变量取，别在代码里写死某台机器的配置
+        let ports: Vec<u16> = std::env::var("DIAG_PORTS")
+            .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+            .unwrap_or_else(|_| PROXY_PORTS.to_vec());
+        println!("待测端口: {ports:?}");
+        for port in ports {
             let open = port_open(port).await;
             println!("port {port} open={open}");
             if open {
