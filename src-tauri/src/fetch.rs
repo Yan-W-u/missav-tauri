@@ -144,8 +144,16 @@ impl Fetcher {
                             "HTTP 403（防盗链或 Cloudflare 拦截；检查 Referer 是否正确）"));
                     } else if code.as_u16() == 404 {
                         return Err(anyhow!("HTTP 404（地址不存在或已过期）"));
+                    } else if matches!(code.as_u16(), 502 | 503 | 504) {
+                        // 这通常是**代理**返回的，不是目标站点。
+                        // 直接抛「HTTP 502 Bad Gateway」对用户毫无意义，
+                        // 得说清楚是代理那一层出了问题，并继续重试。
+                        last_err = Some(anyhow!(
+                            "HTTP {}（代理网关错误：代理连不上目标站点，\
+                             或节点不支持该站点。可换节点，或试试直连）",
+                            code.as_u16()));
                     } else {
-                        last_err = Some(anyhow!("HTTP {code}"));
+                        last_err = Some(anyhow!("HTTP {}", code.as_u16()));
                     }
                 }
                 Err(e) => {

@@ -350,7 +350,21 @@ pub async fn fetch_detail(f: &Fetcher, id_or_url: &str, referer: Option<&str>) -
         format!("{SITE}/cn/{}", normalize_id(id_or_url))
     };
     let ref_s = referer.unwrap_or(SITE_REFERER);
-    let html = f.get_text(&url, Some(ref_s)).await?;
+    let html = match f.get_text(&url, Some(ref_s)).await {
+        Ok(h) if !h.trim().is_empty() => h,
+        Ok(_) => return Err(anyhow!("站点返回了空页面")),
+        Err(e) => {
+            // 代理失败时退直连再试一次（与 SiteClient::fetch_html 同样的理由）
+            if f.proxy.is_none() {
+                return Err(e);
+            }
+            let direct = Fetcher::new(None, f.timeout.as_secs().max(20), 2)?;
+            match direct.get_text(&url, Some(ref_s)).await {
+                Ok(h) if !h.trim().is_empty() => h,
+                _ => return Err(e),
+            }
+        }
+    };
 
     let full_title = H1_RE.captures(&html)
         .map(|c| strip_tags(&c[1]))
@@ -465,12 +479,48 @@ pub struct SiteClient {
     pub base: String,
 }
 
+/// 把冗长错误压短，用于拼接提示
+fn short(s: &str) -> String {
+    let t: String = s.chars().take(90).collect();
+    t.replace('\n', " ")
+}
+
 impl SiteClient {
     pub fn new(proxy: Option<String>, timeout: u64, retries: u32) -> Result<Self> {
         Ok(Self {
             f: Fetcher::new(proxy, timeout, retries)?,
             base: SITE.to_string(),
         })
+    }
+
+    /// 取页面 HTML。**代理失败时自动退直连再试一次。**
+    ///
+    /// 为什么必须这样：代理客户端经常出现「端口开着、能连百度，
+    /// 但对某个站点返回 502 或超时」的情况。这时直连反而通。
+    /// 不加重试的话，用户看到的就是「站点不可达」，但其实是代理的锅。
+    ///
+    /// 反过来也成立：直连被墙、代理能通。所以两边都试，谁通用谁。
+    async fn fetch_html(&self, url: &str, referer: &str) -> Result<String> {
+        match self.f.get_text(url, Some(referer)).await {
+            Ok(h) if !h.trim().is_empty() => Ok(h),
+            Ok(_) => Err(anyhow!("站点返回了空页面")),
+            Err(e) => {
+                // 已经直连了就没必要再试
+                if self.f.proxy.is_none() {
+                    return Err(e);
+                }
+                let direct = Fetcher::new(None, self.f.timeout.as_secs().max(20), 2)?;
+                match direct.get_text(url, Some(referer)).await {
+                    Ok(h) if !h.trim().is_empty() => Ok(h),
+                    Ok(_) => Err(e),
+                    Err(e2) => Err(anyhow!(
+                        "代理与直连都失败。\n\
+                         代理: {}\n\
+                         直连: {}",
+                        short(&e.to_string()), short(&e2.to_string()))),
+                }
+            }
+        }
     }
 
     pub async fn search_page(&self, kw: &str, page: usize) -> Result<Page> {
@@ -482,7 +532,7 @@ impl SiteClient {
                                percent_encoding::utf8_percent_encode(
                                    &k, percent_encoding::NON_ALPHANUMERIC));
         let url = if page <= 1 { base_url } else { format!("{base_url}?page={page}") };
-        let html = self.f.get_text(&url, Some(SITE_REFERER)).await?;
+        let html = self.fetch_html(&url, SITE_REFERER).await?;
         let items = parse_items(&html, &self.base);
         Ok(Page { items, page, pages: total_pages(&html) })
     }
@@ -492,7 +542,7 @@ impl SiteClient {
             percent_encoding::NON_ALPHANUMERIC).to_string();
         let base_url = format!("{}/cn/genres/{}", self.base, enc);
         let url = if page <= 1 { base_url } else { format!("{base_url}?page={page}") };
-        let html = self.f.get_text(&url, Some(SITE_REFERER)).await?;
+        let html = self.fetch_html(&url, SITE_REFERER).await?;
         let items = parse_items(&html, &self.base);
         Ok(Page { items, page, pages: total_pages(&html) })
     }
@@ -551,15 +601,15 @@ impl SiteClient {
         } else {
             format!("{}{}?page={}", self.base, path, page)
         };
-        let html = self.f.get_text(&url, Some(SITE_REFERER)).await?;
+        let html = self.fetch_html(&url, SITE_REFERER).await?;
         let items = parse_items(&html, &self.base);
         Ok(Page { items, page, pages: total_pages(&html) })
     }
 
     /// 标签总表
     pub async fn genres(&self) -> Result<Vec<Genre>> {
-        let html = self.f.get_text(&format!("{}/cn/genres", self.base),
-                                   Some(SITE_REFERER)).await?;
+        let html = self.fetch_html(&format!("{}/cn/genres", self.base),
+                                   SITE_REFERER).await?;
         static PAIR_RE: Lazy<Regex> = Lazy::new(|| {
             Regex::new(r#"/genres/([^"'<>]+)"[^>]*>\s*([^<]{1,40}?)\s*<(?:(?!</?a>)[\s\S]{0,400}?)(\d+)\s*条影片"#).unwrap()
         });
