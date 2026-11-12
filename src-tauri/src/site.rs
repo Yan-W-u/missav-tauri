@@ -646,29 +646,61 @@ impl SiteClient {
     pub async fn genres(&self) -> Result<Vec<Genre>> {
         let html = self.fetch_html(&format!("{}/cn/genres", self.base),
                                    SITE_REFERER).await?;
-        static BLOCK_RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r##"(?s)<a\s[^>]*href="[^"]*/genres/([^"#?]+)"[^>]*>(.{0,600}?)</a>"##)
+
+        // 真实结构（实测）——每个标签是一个 <div>，名称和数量各是一个 <a>：
+        //
+        //   <div>
+        //     <a href=".../cn/genres/%E9%AB%98%E6%B8%85" class="text-nord13">高清</a>
+        //     <p class="text-nord10">
+        //       <a href=".../cn/genres/%E9%AB%98%E6%B8%85">292300 条影片</a>
+        //     </p>
+        //   </div>
+        //
+        // 早先按单个 <a> 抓，会把「292300 条影片」也当成一个标签，
+        // 于是界面上出现「高清 / 292300 条影片」两条并列。必须按 div 分组。
+        static ITEM_RE: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r##"(?s)<div>\s*<a\s[^>]*href="[^"]*/genres/([^"#?]+)"[^>]*>(.*?)</a>\s*<p[^>]*>\s*<a\s[^>]*>(.*?)</a>"##)
                 .unwrap_or_else(|_| Regex::new(r"$^").unwrap())
         });
-        static COUNT_RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"(\d[\d,]*)\s*(?:条|個|items?)")
+        static NUM_RE: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"([\d][\d,]*)\s*(?:条|個|items?)")
                 .unwrap_or_else(|_| Regex::new(r"$^").unwrap())
         });
 
         let mut out: Vec<Genre> = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        for c in BLOCK_RE.captures_iter(&html) {
+        for c in ITEM_RE.captures_iter(&html) {
             let slug = percent_encoding::percent_decode_str(c[1].trim())
                 .decode_utf8_lossy().to_string();
             let name = strip_tags(&c[2]);
-            let name = if name.is_empty() { slug.clone() } else { name };
             if name.is_empty() || !seen.insert(name.clone()) {
                 continue;
             }
-            let count: u64 = COUNT_RE.captures(&c[2])
+            let count: u64 = NUM_RE.captures(&c[3])
                 .and_then(|x| x[1].replace(',', "").parse().ok())
                 .unwrap_or(0);
             out.push(Genre { tag: name, slug, count });
+        }
+
+        // 兜底：万一站点结构又变，至少把名称抓出来，别让整个标签页空掉。
+        // 这里只收「明显像标签名」的（不含数字+条影片 这种数量文案）。
+        if out.is_empty() {
+            static FALLBACK_RE: Lazy<Regex> = Lazy::new(|| {
+                Regex::new(r##"(?s)<a\s[^>]*href="[^"]*/genres/([^"#?]+)"[^>]*>(.{0,80}?)</a>"##)
+                    .unwrap_or_else(|_| Regex::new(r"$^").unwrap())
+            });
+            for c in FALLBACK_RE.captures_iter(&html) {
+                let name = strip_tags(&c[2]);
+                if name.is_empty() || NUM_RE.is_match(&name) {
+                    continue;
+                }
+                let slug = percent_encoding::percent_decode_str(c[1].trim())
+                    .decode_utf8_lossy().to_string();
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                out.push(Genre { tag: name, slug, count: 0 });
+            }
         }
         Ok(out)
     }
