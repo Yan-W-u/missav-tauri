@@ -600,7 +600,9 @@ fn android_http_proxy() -> Option<String> {
         }
     }
     // 2) JNI 读 Settings.Global.http_proxy
-    jni_read_android_proxy()
+    let r = jni_read_android_proxy();
+    eprintln!("[proxy] jni_read_android_proxy() = {r:?}");
+    r
 }
 
 /// 通过 JNI 读 Android 系统代理设置。
@@ -610,35 +612,68 @@ fn jni_read_android_proxy() -> Option<String> {
 
     let vm_ptr = unsafe { ndk_context::android_context().vm() };
     if vm_ptr.is_null() {
+        eprintln!("[jni] vm_ptr 是 null（ndk-context 未初始化）");
         return None;
     }
-    let vm = unsafe { jni::JavaVM::from_raw(vm_ptr as *mut jni::sys::JavaVM) }.ok()?;
-    let mut env = vm.attach_current_thread().ok()?;
+    let vm = match unsafe { jni::JavaVM::from_raw(vm_ptr as *mut jni::sys::JavaVM) } {
+        Ok(v) => v,
+        Err(e) => { eprintln!("[jni] JavaVM::from_raw 失败: {e}"); return None; }
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(e) => e,
+        Err(e) => { eprintln!("[jni] attach_current_thread 失败: {e}"); return None; }
+    };
 
     // ActivityThread.currentActivityThread().getApplication()
-    let at = env.find_class("android/app/ActivityThread").ok()?;
-    let cur = env.call_static_method(&at, "currentActivityThread",
-        "()Landroid/app/ActivityThread;", &[]).ok()?.l().ok()?;
-    let app = env.call_method(&cur, "getApplication",
-        "()Landroid/app/Application;", &[]).ok()?.l().ok()?;
+    let at = match env.find_class("android/app/ActivityThread") {
+        Ok(c) => c,
+        Err(e) => { eprintln!("[jni] find ActivityThread 失败: {e}"); return None; }
+    };
+    let cur = match env.call_static_method(&at, "currentActivityThread",
+            "()Landroid/app/ActivityThread;", &[]).ok().and_then(|v| v.l().ok()) {
+        Some(o) => o,
+        None => { eprintln!("[jni] currentActivityThread() 调用失败"); return None; }
+    };
+    let app = match env.call_method(&cur, "getApplication",
+            "()Landroid/app/Application;", &[]).ok().and_then(|v| v.l().ok()) {
+        Some(o) => o,
+        None => { eprintln!("[jni] getApplication() 调用失败"); return None; }
+    };
     if app.is_null() {
+        eprintln!("[jni] getApplication() 返回 null（Application 还没起来？）");
         return None;
     }
 
-    let sg = env.find_class("android/provider/Settings$Global").ok()?;
-    let resolver = env.call_method(&app, "getContentResolver",
-        "()Landroid/content/ContentResolver;", &[]).ok()?.l().ok()?;
-    let key = env.new_string("http_proxy").ok()?;
-    let key_obj = JObject::from(key);
-    let val = env.call_static_method(&sg, "getString",
-        "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;",
-        &[JValue::Object(&resolver), JValue::Object(&key_obj)])
-        .ok()?.l().ok()?;
+    let sg = match env.find_class("android/provider/Settings$Global") {
+        Ok(c) => c,
+        Err(e) => { eprintln!("[jni] find Settings$Global 失败: {e}"); return None; }
+    };
+    let resolver = match env.call_method(&app, "getContentResolver",
+            "()Landroid/content/ContentResolver;", &[]).ok().and_then(|v| v.l().ok()) {
+        Some(o) => o,
+        None => { eprintln!("[jni] getContentResolver() 失败"); return None; }
+    };
+    let key = match env.new_string("http_proxy") {
+        Ok(k) => JObject::from(k),
+        Err(e) => { eprintln!("[jni] new_string 失败: {e}"); return None; }
+    };
+    let val = match env.call_static_method(&sg, "getString",
+            "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(&resolver), JValue::Object(&key)])
+            .ok().and_then(|v| v.l().ok()) {
+        Some(o) => o,
+        None => { eprintln!("[jni] Settings.Global.getString 调用失败"); return None; }
+    };
     if val.is_null() {
+        eprintln!("[jni] Settings.Global.getString(http_proxy) 返回 null");
         return None;
     }
-    let s: String = env.get_string(&JString::from(val)).ok()?.into();
+    let s: String = match env.get_string(&JString::from(val)) {
+        Ok(v) => v.into(),
+        Err(e) => { eprintln!("[jni] get_string 失败: {e}"); return None; }
+    };
     let s = s.trim();
+    eprintln!("[jni] 读到系统代理原值: {s:?}");
     // 系统里可能存成 ":0" 表示清空
     if s.is_empty() || s == ":0" {
         return None;
