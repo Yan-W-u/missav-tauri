@@ -525,10 +525,34 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
             cands.push(dir.join("bin").join(exe_name));
         }
     }
-    // 2) 显式指定
+    // 2) 显式指定（环境变量）
     if let Ok(p) = std::env::var("FFMPEG") {
         if !p.trim().is_empty() {
             cands.push(PathBuf::from(p.trim()));
+        }
+    }
+    // 2b) Windows 上再直读注册表里的用户/系统环境变量。
+    //
+    // 为什么需要这一步：改完环境变量后，已经在跑的 explorer / 终端
+    // 的环境块不会自动刷新，从这里启动的进程继承的是旧值 —— 表现为
+    // 「明明设了 FFMPEG，程序却说找不到」。直读注册表能绕开这个问题，
+    // 用户改完立刻生效，不必重启资源管理器或注销。
+    #[cfg(windows)]
+    {
+        for (hive, sub) in [
+            (winreg::enums::HKEY_CURRENT_USER,
+             r"Environment"),
+            (winreg::enums::HKEY_LOCAL_MACHINE,
+             r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        ] {
+            if let Ok(k) = winreg::RegKey::predef(hive).open_subkey(sub) {
+                if let Ok(p) = k.get_value::<String, _>("FFMPEG") {
+                    let t = p.trim();
+                    if !t.is_empty() {
+                        cands.push(PathBuf::from(t));
+                    }
+                }
+            }
         }
     }
     // 3) PATH
