@@ -192,6 +192,33 @@ async fn route(srv: &Arc<ApiServer>, req: Request) -> (u16, String, Vec<u8>) {
                 "cdn_direct": cdn_direct, "cdn": cdn_direct,
             }));
         }
+        // 前端的 checkProxy() 会调这两个。之前只做了移动端的 IPC，
+        // 桌面端这两条路由是缺的 —— 浏览器里点「代理」会报 404。
+        "/api/proxy/status" => {
+            let proxy = srv.state.proxy.lock().unwrap().clone();
+            let alive = match proxy.clone() {
+                Some(p) => match crate::fetch::Fetcher::with_options(
+                    Some(p), 10, 1,
+                    crate::fetch::GLOBAL_INSECURE.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    Ok(f) => f.probe("https://www.baidu.com/", None).await
+                        .map(|(c, _)| (200..400).contains(&c)).unwrap_or(false),
+                    Err(_) => false,
+                },
+                None => false,
+            };
+            return json_resp(200, json!({"ok": true, "proxy": proxy, "alive": alive}));
+        }
+        "/api/proxy" => {
+            // 强制重探：清缓存后重新探测
+            crate::fetch::reset_proxy_cache().await;
+            let found = crate::fetch::detect_proxy().await;
+            if let Some(ref p) = found {
+                *srv.state.proxy.lock().unwrap() = Some(p.clone());
+            }
+            let proxy = srv.state.proxy.lock().unwrap().clone();
+            return json_resp(200, json!({"ok": true, "proxy": proxy}));
+        }
         "/api/genres" => {
             let proxy = srv.state.proxy.lock().unwrap().clone();
             return match SiteClient::new(proxy, 20, 1) {

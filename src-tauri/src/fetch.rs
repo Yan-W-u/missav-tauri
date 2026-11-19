@@ -135,6 +135,11 @@ impl Fetcher {
     /// 遇到 403 才退到 curl 子进程取一次完整正文。
     /// 取不到就返回 None，让调用方走原有报错路径。
     async fn try_curl(&self, url: &str, referer: Option<&str>) -> Option<Vec<u8>> {
+        // 诊断开关：设了 MISSAV_NO_CURL 就跳过 curl 后备，
+        // 用来验证「reqwest 自己到底能不能过 Cloudflare」。
+        if std::env::var("MISSAV_NO_CURL").is_ok() {
+            return None;
+        }
         let curl = find_curl()?;
 
         // 用临时文件接正文，避免大页面把管道塞满
