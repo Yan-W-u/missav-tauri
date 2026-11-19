@@ -197,10 +197,27 @@ impl Fetcher {
         let mut last_err: Option<anyhow::Error> = None;
         for attempt in 1..=self.retries.max(1) {
             let h = self.base_headers(referer);
+            // 诊断：把实际发出的头打出来，确认 UA 真的在
+            if std::env::var("MISSAV_TRACE_HEADERS").is_ok() {
+                let ua = h.get(USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("<缺失>");
+                eprintln!("[hdr] url={url} UA={}", &ua[..ua.len().min(60)]);
+            }
             let tmo = self.timeout * attempt.min(3);
             match self.client.get(url).headers(h).timeout(tmo).send().await {
                 Ok(resp) => {
                     let code = resp.status();
+                    // 403 时把服务端标识打出来，用来区分是谁在拒绝：
+                    // server: cloudflare 且带 cf-mitigated => 站点 WAF
+                    // server: 其它 / 无该头             => 代理侧拦截
+                    if code.as_u16() == 403 {
+                        let srv = resp.headers().get("server")
+                            .and_then(|v| v.to_str().ok()).unwrap_or("-").to_string();
+                        let mitigated = resp.headers().get("cf-mitigated")
+                            .and_then(|v| v.to_str().ok()).unwrap_or("-").to_string();
+                        let ray = resp.headers().get("cf-ray")
+                            .and_then(|v| v.to_str().ok()).unwrap_or("-").to_string();
+                        eprintln!("[403] url={url} server={srv} cf-mitigated={mitigated} cf-ray={ray}");
+                    }
                     if code.is_success() || code.as_u16() == 206 {
                         match self.read_with_idle(resp, idle_timeout_secs).await {
                             Ok(b) => return Ok(b),
@@ -210,8 +227,7 @@ impl Fetcher {
                         // 403 有两种情况：
                         //   1) 真的防盗链 / 无权限
                         //   2) Cloudflare 的 "Just a moment..." JS 挑战
-                        // 后者 reqwest 过不了（不能执行 JS，TLS 指纹也不同），
-                        // 但系统 curl 能过，所以退到 curl 后备通道再试一次。
+                        // 后者 reqwest 过不了（不能执行 JS，TLS 指纹也不同），                        // 但系统 curl 能过，所以退到 curl 后备通道再试一次。
                         if let Some(body) = self.try_curl(url, referer).await {
                             return Ok(body);
                         }
