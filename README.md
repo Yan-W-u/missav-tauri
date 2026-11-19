@@ -1,10 +1,29 @@
 # MissAV 下载器 · Tauri 2 版
 
+[![Release](https://img.shields.io/github/v/release/Yan-W-u/missav-tauri?label=%E4%B8%8B%E8%BD%BD)](https://github.com/Yan-W-u/missav-tauri/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-lightgrey)]()
+
 一个用 **Rust + Tauri 2** 写的视频下载与在线观看客户端，带 Windows 桌面版和 Android 版。
 
 界面是原生的 HTML/CSS/JS，后端是 Rust，打包体积小、启动快、不需要装 Python 或 Node 运行时。
 
 > 仅用于个人学习和私有部署。请自行确认所在地法律与目标站点的服务条款。
+
+---
+
+## 下载
+
+**[⬇ 下载 Windows 版](https://github.com/Yan-W-u/missav-tauri/releases/latest)**
+
+解压后双击 `MissAV下载器.exe`。同目录下必须保留 `ui/` 文件夹，否则界面白屏。
+
+| 平台 | 文件 | 大小 |
+| --- | --- | --- |
+| Windows | `MissAV-Downloader-Windows.zip` | 2.6 MB |
+| Android | 见 Releases 里的 `*-arm64.apk` | 9.1 MB |
+
+Android 版目前只支持 CDN 直连下载，站点搜索和详情不可用（原因见下方「已知限制」）。
 
 ---
 
@@ -16,9 +35,21 @@
 - **详情查看**：封面、时长、发行日期、演员、分类、简介，并自动标注**有码 / 无码**
 - **在线观看**：独立的播放页，主界面和播放互不阻塞，清晰度可切换
 - **下载**：HLS 分片并发下载 → 解密 → 拼接 → ffmpeg 无损转封装为 mp4
-- **断点续传**：分片缓存按播放源哈希命名，中断后重跑只补缺的片
+- **断点续传**：按「番号 + 清晰度」缓存分片，中断后重跑只补缺的片
 - **导入外部链接**：直接粘贴任意页面地址或 `.m3u8`，绕过站点本身使用
 - **历史 / 收藏**：任务进度、已完成记录（文件丢失会自动标记）、收藏列表
+
+---
+
+## 已知限制
+
+**Android 版站点功能不可用。** Android 系统没有 curl，而站点在 Cloudflare 后面会对 Rust 客户端的 TLS 请求返回 JS 挑战页。带完整 Chrome UA、关掉 HTTP/2、换代理方式都试过，无效；桌面端能通是因为有系统 curl 兜底。手机端因此只保留 CDN 直连下载分片的能力。
+
+**ffmpeg 不是必装但强烈建议。** 没有它只能输出 `.ts`（能播，但不能拖进度条）。程序按「同目录 → `FFMPEG` 环境变量 → PATH → 常见安装位置」的顺序查找。
+
+**解析依赖 HTML 结构。** 目标站改版会导致抓取失败，需要跟着改正则 —— 这是所有同类工具的通病。
+
+**需要能访问目标站点的代理。** 程序只做代理探测和流量转发，不提供任何翻墙能力。
 
 ---
 
